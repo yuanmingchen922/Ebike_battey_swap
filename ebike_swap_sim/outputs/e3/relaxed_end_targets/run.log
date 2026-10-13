@@ -1,0 +1,18 @@
+  [colocated seed 0] baseline NONE          total    803.90 unserved  3 transfers  0 families {} (0.00s)
+  [colocated seed 0] baseline REORDER_POINT total    809.30 unserved  3 transfers  1 families {} (0.00s)
+  [colocated seed 0] ILP transfers       OPTIMAL obj    481.50 gap 0 solve   34.2s build 4.9s binaries 1,491,087 start accepted True | unserved 0 transfers 0 moved 0 stockouts {'S1': 0, 'S2': 0, 'S3': 5} peak kW {'sites': 0.0}
+  [colocated seed 0] ILP no_transfers   OPTIMAL obj    481.50 gap 0 solve   26.0s build 5.2s binaries 1,491,087 start accepted True | unserved 0 transfers 0 moved 0 stockouts {'S1': 0, 'S2': 0, 'S3': 5} peak kW {'sites': 0.0}
+  [separated_1hub seed 0] baseline NONE          total   1115.80 unserved  6 transfers  0 families {} (0.00s)
+  [separated_1hub seed 0] baseline REORDER_POINT total    982.46 unserved  4 transfers  6 families {} (0.00s)
+  [separated_1hub seed 0] ILP transfers       OPTIMAL obj    525.25 gap 0 solve   90.2s build 5.1s binaries 1,622,318 start accepted True | unserved 0 transfers 0 moved 0 stockouts {'S1': 13, 'S2': 17, 'S3': 12} peak kW {'hub1': 0.0}
+  [separated_1hub seed 0] ILP no_transfers   OPTIMAL obj    525.25 gap 0 solve   14.7s build 6.0s binaries 1,622,318 start accepted True | unserved 0 transfers 0 moved 0 stockouts {'S1': 13, 'S2': 16, 'S3': 13} peak kW {'hub1': 0.0}
+| layout | method | switch | total | C_travel | C_elec | unserved | response | lateness | C_reb | served_share | n_unserved | mean_lateness_h | n_late | n_swaps | transfers_used | batteries_moved | stockout_slots_total | m_t_max | peak_kw_group_max | end_full_total | runtime_s | gap | n_seeds |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| colocated | ilp | no_transfers | 481.500 | 94.500 | 0 | 0 | 256 | 26 | 0 | 1 | 0 | 0.036 | 7 | 9 | 0 | 0 | 5 | 0 | 0 | 0 | 25.995 | 0 | 1 |
+| colocated | ilp | transfers free | 481.500 | 94.500 | 0 | 0 | 256 | 26 | 0 | 1 | 0 | 0.036 | 7 | 9 | 0 | 0 | 5 | 0 | 0 | 0 | 34.162 | 0 | 1 |
+| colocated | baseline | transfer_rule=NONE | 803.900 | 114.900 | 10 | 300 | 238 | 36 | 0 | 0.900 | 3 | 0.056 | 10 | 10 | 0 | 0 | 15 | 0 | 5.333 | 6 | 0.002 | - | 1 |
+| colocated | baseline | transfer_rule=REORDER_POINT | 809.300 | 114.900 | 10 | 300 | 238 | 36 | 5.400 | 0.900 | 3 | 0.056 | 10 | 10 | 1 | 2 | 15 | 2 | 5.333 | 6 | 0.002 | - | 1 |
+| separated_1hub | ilp | no_transfers | 525.250 | 98.250 | 0 | 0 | 256 | 26 | 0 | 1 | 0 | 0.036 | 6 | 6 | 0 | 0 | 42 | 0 | 0 | 3 | 14.727 | 0 | 1 |
+| separated_1hub | ilp | transfers free | 525.250 | 98.250 | 0 | 0 | 256 | 26 | 0 | 1 | 0 | 0.036 | 6 | 6 | 0 | 0 | 42 | 0 | 0 | 3 | 90.170 | 0 | 1 |
+| separated_1hub | baseline | transfer_rule=NONE | 1115.800 | 106.800 | 0 | 600 | 218 | 46 | 0 | 0.800 | 6 | 0.080 | 9 | 6 | 0 | 0 | 38 | 0 | 0 | 3 | 0.002 | - | 1 |
+| separated_1hub | baseline | transfer_rule=REORDER_POINT | 982.461 | 117.150 | 6.111 | 400 | 236 | 46 | 32.200 | 0.867 | 4 | 0.074 | 10 | 8 | 6 | 11 | 26 | 6 | 5.333 | 3 | 0.002 | - | 1 |

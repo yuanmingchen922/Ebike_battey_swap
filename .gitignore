@@ -1,0 +1,34 @@
+# Copyrighted source material (supervisor's model PDFs, paper full texts, extracted text / page images)
+*.pdf
+notes/extracted/
+notes/literature/*.txt
+notes/figs/
+
+# Solver and tool residue
+gurobi.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+venv/
+
+# OS / editor files
+.DS_Store
+*.swp
+*~
+
+# Large per-run instance dumps (the experiment scripts regenerate them from the seed)
+ebike_swap_sim/outputs/*/instances/
+
+# Scratch and temporary files (the .jsonl records are kept on purpose)
+scratch/
+*.tmp
+*.bak
+*_partial*.json
+
+# Chinese-language companion notes and internal agent workflow logs (local only)
+*_zh.md
+notes/workflow*.json
+notes/*_partial*.json

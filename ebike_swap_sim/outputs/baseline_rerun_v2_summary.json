@@ -1,0 +1,321 @@
+{
+ "wall_s": 8.312053978443146e-08,
+ "e2": {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e2_coord/baseline_rerun_v2/RESULTS_v2.md",
+  "anomalies": [],
+  "headline": {
+   "gap_v2_pct": 24.02693749067078,
+   "gap_v2_ci": 8.680161416481472,
+   "gap_legacy_pct": 28.01426407243384,
+   "gap_legacy_ci": 7.194768295776567,
+   "gap_v2_rho0_pct": 24.024519685743748,
+   "gap_reserve_pct": 23.58343542090265,
+   "mean_v2": 1150.1529629629629,
+   "mean_legacy": 1166.1596296296298,
+   "mean_reserve": 1142.326296296296,
+   "mean_ilp": 773.0433333333333,
+   "unserved_v2": 6.066666666666666,
+   "unserved_legacy": 6.266666666666667,
+   "unserved_ilp": 2.6666666666666665,
+   "km_v2": 101.39,
+   "km_legacy": 107.73,
+   "v2_le_legacy": 10,
+   "n": 15,
+   "cert_written": 11,
+   "cert_relaxed": 15,
+   "cert_rho0": 11,
+   "old_accepted": 11,
+   "legacy_all_match": true,
+   "arcs_all_match": true
+  }
+ },
+ "e3": {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e3/baseline_rerun_v2/RESULTS_v2.md",
+  "anomalies": [],
+  "headline": {
+   "none_v2": 1307.8376543209877,
+   "none_old": 1258.2296296296295,
+   "reorder_v2": 1176.8370370370371,
+   "reorder_old": 1148.306790123457,
+   "ilp_free": 607.1586419753087,
+   "ilp_none": 777.6395061728394,
+   "gap_none_v2": 40.463884056260135,
+   "gap_none_legacy": 38.215049058952005,
+   "gap_reorder_v2": 47.967400665622876,
+   "gap_reorder_legacy": 45.908094936464586,
+   "cert_written_none": 1,
+   "cert_relaxed_none": 9,
+   "cert_written_reorder": 1,
+   "cert_relaxed_reorder": 9,
+   "n": 9,
+   "legacy_all_match": true,
+   "arcs_all_match": true,
+   "unserved_none_v2": 8.222222222222221,
+   "unserved_none_old": 7.555555555555555,
+   "unserved_reorder_v2": 6.222222222222222,
+   "unserved_reorder_old": 6.0
+  }
+ },
+ "e4": {
+  "paths": [
+   "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e4_sizing/RESULTS_v2.md",
+   "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e4_sizing/stressed_lowq0/RESULTS_v2.md",
+   "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e4_sizing/cost_vs_B_v2.png",
+   "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e4_sizing/cost_vs_C_v2.png",
+   "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e4_sizing/cost_vs_P_v2.png"
+  ],
+  "anomalies": [],
+  "headline": {
+   "main": {
+    "regime": "main",
+    "n_variants": 51,
+    "default_v2": 885.4462962962963,
+    "default_old": 949.2722222222222,
+    "default_reserve": 883.048148148148,
+    "default_ilp": 553.2166666666667,
+    "default_gap_v2_pct": 36.08942893130834,
+    "default_gap_legacy_pct": 40.90833980708714,
+    "default_gap_v2_per_seed": [
+     44.43,
+     20.35,
+     43.49
+    ],
+    "default_gap_reserve_pct": 35.904522525752114,
+    "default_unserved_v2": 4.0,
+    "default_unserved_old": 4.666666666666667,
+    "default_unserved_ilp": 0.6666666666666666,
+    "cert_written": 34,
+    "cert_rho0": 34,
+    "cert_relaxed": 51,
+    "old_accepted": 10,
+    "old_started_from_baseline": 24,
+    "old_accepted_rho0": 13,
+    "old_rho0_runs": 27,
+    "mean_v2": 877.5944444444445,
+    "mean_old": 941.5872549019608,
+    "v2_le_old": 51,
+    "legacy_all_match": true,
+    "arcs_all_match": true,
+    "q0_all_match": true,
+    "ilp_le_v2_all": true,
+    "spares_to_match": [
+     {
+      "B_ref": 2,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 535.4388888888889,
+      "baseline": "baseline",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 4",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 4.0,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 2,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 535.4388888888889,
+      "baseline": "baseline_legacy",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 4",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 4.666666666666667,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 2,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 535.4388888888889,
+      "baseline": "baseline_reserve",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 4",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 4.0,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 4,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 553.2166666666667,
+      "baseline": "baseline",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 2",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 4.0,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 4,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 553.2166666666667,
+      "baseline": "baseline_legacy",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 2",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 4.666666666666667,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 4,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 553.2166666666667,
+      "baseline": "baseline_reserve",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 2",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 4.0,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     }
+    ]
+   },
+   "stressed_lowq0": {
+    "regime": "stressed_lowq0",
+    "n_variants": 27,
+    "default_v2": 1060.575925925926,
+    "default_old": 978.7648148148149,
+    "default_reserve": 1060.575925925926,
+    "default_ilp": 567.3574074074073,
+    "default_gap_v2_pct": 44.77574252494205,
+    "default_gap_legacy_pct": 40.70807578162573,
+    "default_gap_v2_per_seed": [
+     40.51,
+     38.05,
+     55.77
+    ],
+    "default_gap_reserve_pct": 44.77574252494205,
+    "default_unserved_v2": 5.333333333333333,
+    "default_unserved_old": 4.333333333333333,
+    "default_unserved_ilp": 0.6666666666666666,
+    "cert_written": 18,
+    "cert_rho0": 18,
+    "cert_relaxed": 27,
+    "old_accepted": 6,
+    "old_started_from_baseline": 6,
+    "old_accepted_rho0": 10,
+    "old_rho0_runs": 21,
+    "mean_v2": 1287.5559670781893,
+    "mean_old": 1156.9742798353911,
+    "v2_le_old": 3,
+    "legacy_all_match": true,
+    "arcs_all_match": true,
+    "q0_all_match": true,
+    "ilp_le_v2_all": true,
+    "spares_to_match": [
+     {
+      "B_ref": 2,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 554.4,
+      "baseline": "baseline",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 4",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 10.333333333333334,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 2,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 554.4,
+      "baseline": "baseline_legacy",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 4",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 8.666666666666666,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 2,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 554.4,
+      "baseline": "baseline_reserve",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 4",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 10.333333333333334,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 4,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 567.3574074074073,
+      "baseline": "baseline",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 2",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 5.333333333333333,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 4,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 567.3574074074073,
+      "baseline": "baseline_legacy",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 2",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 4.333333333333333,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     },
+     {
+      "B_ref": 4,
+      "ilp_unserved_at_B_ref": 0.6666666666666666,
+      "ilp_total_at_B_ref": 567.3574074074073,
+      "baseline": "baseline_reserve",
+      "min_B_j_matching_service_level (seed means)": "> 6 (not within sweep)",
+      "extra_spares_per_site": "> 2",
+      "per_seed_min_B_j": [
+       "inf",
+       "inf",
+       "inf"
+      ],
+      "baseline_unserved_at_B_ref": 5.333333333333333,
+      "min_B_j_matching_ILP_total": "never (baseline never reaches the ILP cost)"
+     }
+    ]
+   }
+  }
+ }
+}

@@ -1,0 +1,79 @@
+{
+ "seeds": [
+  0,
+  1,
+  2
+ ],
+ "heat_seeds": [
+  0
+ ],
+ "time_limit": 300.0,
+ "family": "usd4h",
+ "wall_s": 3457.3756954581477,
+ "probe": false,
+ "free_choice": {
+  "0": {
+   "B": {
+    "S1": 2,
+    "S2": 1,
+    "S3": 1
+   },
+   "C": {
+    "S1": 1,
+    "S2": 1,
+    "S3": 1
+   }
+  },
+  "1": {
+   "B": {
+    "S1": 1,
+    "S2": 1,
+    "S3": 1
+   },
+   "C": {
+    "S1": 1,
+    "S2": 1,
+    "S3": 0
+   }
+  },
+  "2": {
+   "B": {
+    "S1": 1,
+    "S2": 2,
+    "S3": 1
+   },
+   "C": {
+    "S1": 1,
+    "S2": 1,
+    "S3": 0
+   }
+  }
+ },
+ "skipped": [
+  "seed 2 B3_C4_P4",
+  "seed 0 B3_C4_P1.4",
+  "seed 0 B3_C4_P2.8",
+  "seed 0 B3_C4_P4.2",
+  "seed 1 B3_C4_P1.4",
+  "seed 1 B3_C4_P2.8",
+  "seed 2 B3_C4_P1.4",
+  "seed 2 B3_C4_P2.8",
+  "seed 0 B1_C1_P4",
+  "seed 0 B1_C3_P4",
+  "seed 0 B1_C4_P4",
+  "seed 0 B2_C1_P4",
+  "seed 0 B2_C3_P4",
+  "seed 0 B2_C4_P4",
+  "seed 0 B4_C1_P4",
+  "seed 0 B4_C3_P4",
+  "seed 0 B4_C4_P4",
+  "seed 0 B6_C1_P4",
+  "seed 0 B6_C3_P4",
+  "seed 0 B6_C4_P4"
+ ],
+ "pruning": {
+  "reachable": true
+ },
+ "threads": 3,
+ "windows_per_year": 1460.0
+}

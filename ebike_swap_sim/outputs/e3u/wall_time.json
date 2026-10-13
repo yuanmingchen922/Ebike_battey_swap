@@ -1,0 +1,1 @@
+{"wall_s": 3382.467390249949, "seeds": [0, 1, 2], "time_limit": 300.0, "hub_spares": 0, "wall_budget": 3420.0, "threads": 3, "pruning": {"tau_max": 4, "start_slack": 6, "reachable_pruning": true}}

@@ -1,0 +1,1 @@
+{"wall_s": 1755.882130582817, "seeds": [0, 1, 2], "time_limit": 200.0, "family": "large", "inst_kwargs": {"total_spares": 9, "total_chargers": 9, "init_frac": [0.3, 0.6]}, "hub_spares": 3}

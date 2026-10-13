@@ -1,0 +1,23 @@
+# Dataset inspection conclusions (2026-10-11, read-only API queries, no files downloaded)
+
+Full query commands and field lists are in `notes/workflow1_result.json` → `datasets[*].access_recipe`.
+
+| Dataset | Availability | Size | Role in the simulator | Main limitations |
+|---|---|---|---|---|
+| Kaggle Food Ordering (ahsan81) | Metadata readable, CSV needs a Kaggle token | 1,898 orders × 9 columns, one-off release in 2022 | Priors only: prep time 20–35 min (approximately uniform), rider delivery time 15–33 min (mean 24.2), shares of 14 cuisine classes (American 31%, Japanese 25%, Italian 16%, Chinese 11%), restaurant-popularity long tail (top 5 account for 33%) | Likely synthetic teaching data (fictional platform FoodHub); no timestamps, no coordinates, no rider IDs; 71% weekend is sample bias |
+| NYC DOHMH restaurant inspections (43nn-pn8j) | SODA API open | 296,623 violation rows, 31,516 restaurants (camis), updated daily | Restaurant side of OD generation: deduplicating by camis gives 27,030 usable restaurants (inspected, coordinates inside NYC, cuisine known; 10,605 in Manhattan), with lat/lon, cuisine_description (90 classes), boro, zipcode, NTA | Must aggregate by camis; about 3.9k have no cuisine (uninspected pre-permit restaurants); includes cafeterias, clubs and other non-delivery venues |
+| NYC Neighborhoods ACS 2008-12 (GeoDa) | 1.27 MB zip downloadable | 195 NTA (2010 version) polygons × 98 variables | Zone weights for destination sampling: poptot, medianinco, medianage, male16to19/femal16_19, bachelor, popdty etc. | Data are 14 years old; no 18–25 age band, no student-enrolment variable; 2010 NTAs are incompatible with 2020 NTAs (262)/tracts (2,325). Recommended alternatives: Census API ACS5 2023/2024 by tract (free key required) or NYC Open Data 2020 NTA (9nt8-h7nd) |
+| Motor Vehicle Collisions (h9gi-nx95) | SODA API open | 2,269,187 crashes (2012-07 to 2026-06), 89% with coordinates | Riding-risk layer: 66,743 crashes with cyclist injury/death (about 5k per year), can be aggregated server-side with SoQL onto a 0.005° grid (<1 MB) | Updates currently paused (last 2026-06-11); exposure confounding (crash counts rise with bicycle volume); police reporting bias |
+| Bicycle Counters/Counts (smn3-rzf9, uczf-rk3c) | SODA API open, flagged Historical | 41 counters / 30 sites; 7.38M rows of 15-minute counts (2012-08 to 2026-01) | Proxy for the time-of-day demand curve: avenue counters (8th Ave @ 50th etc.) have a shape close to delivery activity (no morning peak, evening peak 17–20h); bridge counters show a commuter double peak and are unusable | Cannot separate delivery riders from commuters; sites concentrated on East River bridges. Successor datasets ct66-47at / 6up2-gnw8 |
+| Citi Bike GBFS / tripdata | GBFS readable in real time | 2,519 stations (NYC 2,400), 74,264 docks | Station candidate set: the `is_charging` field of the v2.3 feed shows only 32 stations (1.3%) are grid-connected and can charge, 2,487 are off-grid → natural counterpart of E2's separation into "swap stations S (need transfers)" and "charging stations C" | Trip data are the bike-share population, not representative of delivery; no battery-state data |
+
+## Concrete mapping to the OD generator on proposal p. 5
+
+1. **Time-dependent generator**: Kaggle has no timestamps, bicycle counters have a commuter shape. Recommend using the delivery hourly curve from the literature (lunch and dinner double peak) as an explicit parameter, starting with a synthetic curve.
+2. **Demographic destination sampling**: zone weights w_z ∝ pop_z × (1 + α·young_z) × income_factor_z, with variables from the ACS (NTA or tract). Effect sizes from the three papers cited on proposal p. 13 (PMC10163566, PMC12283340, MDPI 21/5/568) have not yet been extracted.
+3. **Restaurant-type sampling**: draw a cuisine from the zone's cuisine distribution (DOHMH counts by camis, optionally re-weighted by Kaggle cuisine shares), then draw a restaurant within the area. The restaurant coordinate is the order origin o_i.
+
+## Unresolved data gaps (from the completeness critique)
+
+- No data source for the road network, elevation or traffic lights has been inspected: candidates are NYC LION/CSCL street centrelines, NYC DOT signal data, NYC 1-ft DEM / USGS 3DEP. Current experiments use the synthetic grid in `network.py`.
+- No real data have been written to disk yet. Moving to the real-data phase requires downloading: the deduplicated DOHMH restaurant table (about 4.5 MB CSV), the GeoDa ACS zip (1.27 MB) or a Census API pull, the crash grid aggregation (<1 MB), the avenue-counter hourly curve.

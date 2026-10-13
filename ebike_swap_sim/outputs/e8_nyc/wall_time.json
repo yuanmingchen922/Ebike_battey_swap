@@ -1,0 +1,1 @@
+{"wall_s": 1132.3041442909744, "time_limit": 300.0, "threads": 3, "seeds": [0, 1, 2], "sitings": ["busiest", "grid"], "methods": ["baseline", "ilp", "ilp_relaxed"]}

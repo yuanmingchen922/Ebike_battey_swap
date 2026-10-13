@@ -1,0 +1,164 @@
+[
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/dohmh_restaurants.csv",
+  "source_url": "https://data.cityofnewyork.us/resource/43nn-pn8j.csv?$select=camis,min(dba) as r_dba,min(boro) as r_boro,min(zipcode) as r_zip,max(latitude) as r_lat,max(longitude) as r_lon,min(cuisine_description) as r_cuisine,min(community_board) as r_cb,min(nta) as r_nta,min(census_tract) as r_tract,max(inspection_date) as r_last_insp,count(*) as n_rows&$group=camis&$order=camis&$limit=50000",
+  "bytes": 4643405,
+  "rows": 31516,
+  "md5": "dd26dec21a7f1270866fd775ffffd828",
+  "pulled_at": "2026-10-12",
+  "description": "NYC DOHMH restaurant inspection results, server-side grouped to one row per restaurant (camis). 31,516 restaurants; 27,030 'usable' (bbox coords + cuisine + inspected). n_rows = inspection/violation rows per camis (sum 296,623 = full source)."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/nycnhood_acs.zip",
+  "source_url": "https://geodacenter.github.io/data-and-lab/data/nycnhood_acs.zip",
+  "bytes": 1265653,
+  "rows": null,
+  "md5": "d919ad5378b02a634ed4ebaf20f93b42",
+  "pulled_at": "2026-10-12",
+  "description": "GeoDa Center 'NYC Neighborhoods' ACS 2008-12 shapefile (195 NTA-2010 polygons x 98 attributes). Original zip, unmodified."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/nycnhood_acs/NYC_Nhood ACS2008_12.shp",
+  "source_url": "https://geodacenter.github.io/data-and-lab/data/nycnhood_acs.zip",
+  "bytes": 1691916,
+  "rows": null,
+  "md5": "37d5b99f3989f8976f55afe13118758e",
+  "pulled_at": "2026-10-12",
+  "description": "Shapefile geometry (POLYGON), extracted from zip (__MACOSX skipped)."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/nycnhood_acs/NYC_Nhood ACS2008_12.shx",
+  "source_url": "https://geodacenter.github.io/data-and-lab/data/nycnhood_acs.zip",
+  "bytes": 1660,
+  "rows": null,
+  "md5": "a3bdecbd5a8f57b5a13b8b16fb647639",
+  "pulled_at": "2026-10-12",
+  "description": "Shapefile index, extracted from zip."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/nycnhood_acs/NYC_Nhood ACS2008_12.dbf",
+  "source_url": "https://geodacenter.github.io/data-and-lab/data/nycnhood_acs.zip",
+  "bytes": 317314,
+  "rows": null,
+  "md5": "6d2971fd9551cb9274accc7314db4b33",
+  "pulled_at": "2026-10-12",
+  "description": "Shapefile attribute table (195 records, 98 fields), extracted from zip."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/nycnhood_acs/NYC_Nhood ACS2008_12.prj",
+  "source_url": "https://geodacenter.github.io/data-and-lab/data/nycnhood_acs.zip",
+  "bytes": 143,
+  "rows": null,
+  "md5": "e729936bf5360b37a15365fc295a1901",
+  "pulled_at": "2026-10-12",
+  "description": "Projection: GCS_WGS_1984 (EPSG:4326, degrees)."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/nycnhood_acs_attributes.csv",
+  "source_url": "derived from raw/nycnhood_acs/NYC_Nhood ACS2008_12.dbf (pyshp)",
+  "bytes": 97355,
+  "rows": 195,
+  "md5": "140f326093bc4563fa7cc7dc161612c9",
+  "pulled_at": "2026-10-12",
+  "description": "Attribute table export, one row per NTA, record order identical to the shapefile / GeoJSON. medianinco/medianage/medianagem/medianagef/popdty/HHsize/gini are stored as text in the DBF and are tract SUMS, not NTA medians (see problems)."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/nycnhood_acs.geojson",
+  "source_url": "derived from raw/nycnhood_acs/NYC_Nhood ACS2008_12.shp (pyshp __geo_interface__)",
+  "bytes": 4694543,
+  "rows": 195,
+  "md5": "cda3b1d35a7b26fb21361ec65804e76c",
+  "pulled_at": "2026-10-12",
+  "description": "FeatureCollection of 195 NTA polygons, WGS84 lon/lat (prj = GCS_WGS_1984), properties = all 98 DBF fields. bbox lon -74.2556..-73.7000, lat 40.4961..40.9155."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/cyclist_crash_grid_0005deg.csv",
+  "source_url": "https://data.cityofnewyork.us/resource/h9gi-nx95.csv?$select=floor(latitude*200)/200 as lat_cell,floor(longitude*200)/200 as lon_cell,count(*) as cyc_crashes,sum(number_of_cyclist_injured) as cyc_inj,sum(number_of_cyclist_killed) as cyc_killed&$where=crash_date>='2022-01-01' AND (number_of_cyclist_injured>0 OR number_of_cyclist_killed>0) AND latitude>40.4 AND latitude<41.0 AND longitude>-74.3 AND longitude<-73.6&$group=lat_cell,lon_cell&$order=lat_cell,lon_cell&$limit=50000",
+  "bytes": 129742,
+  "rows": 2251,
+  "md5": "533f8878f31b43d5413e3717fbd2e6e8",
+  "pulled_at": "2026-10-12",
+  "description": "Motor Vehicle Collisions - Crashes, cyclist-injury/fatality crashes since 2022-01-01 aggregated server-side to a 0.005 deg (~555 m N-S x ~420 m E-W) grid; cell = floor() = SW corner. 2,251 cells, 20,999 crashes, 21,259 cyclists injured, 100 killed. Source last updated 2026-06-11."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/bike_counter_sites_raw.json",
+  "source_url": "https://data.cityofnewyork.us/resource/smn3-rzf9.json?$limit=50",
+  "bytes": 9084,
+  "rows": 41,
+  "md5": "d57070f371c5ff05dec3364d2c46b67c",
+  "pulled_at": "2026-10-12",
+  "description": "Bicycle Counters site list, all 41 sites, unmodified API response."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/bike_counter_sites.csv",
+  "source_url": "derived from raw/bike_counter_sites_raw.json",
+  "bytes": 2178,
+  "rows": 18,
+  "md5": "dd70509a4e1a65e7fc79581165912777",
+  "pulled_at": "2026-10-12",
+  "description": "18 selected NON-bridge sites (name contains Ave/St/Greenway/Columbus/Amsterdam/Broadway/Prospect/Kent, excludes 'Bridge' and 'Peds'). Columns id,name,lat,lon,counter,interval_min,domain,timezone. 5 of the 18 have no 2024 counts; 'Staten Island Ferry' is a substring false-positive of 'St'."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/bike_counter_dow_hour_raw.csv",
+  "source_url": "https://data.cityofnewyork.us/resource/uczf-rk3c.json?$select=date_extract_dow(date) as dow,date_extract_hh(date) as hh,sum(counts) as c,count(*) as n&$where=id='<id>' AND date between '2024-01-01T00:00:00' and '2024-12-31T23:59:59'&$group=dow,hh&$order=dow,hh&$limit=500 (one request per selected site id)",
+  "bytes": 166119,
+  "rows": 2184,
+  "md5": "adf58f888cd15f77046ac6e294f6bd16",
+  "pulled_at": "2026-10-12",
+  "description": "Raw 2024 aggregates per counter x day-of-week (SoQL dow: 0=Sunday..6=Saturday) x hour: c = sum of counts, n = number of 15-min (or 60-min) intervals. 13 counters x 168 groups."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/bike_counter_hourly_profile.csv",
+  "source_url": "derived from raw/bike_counter_dow_hour_raw.csv (weekday = dow 1-5, weekend = dow 0,6)",
+  "bytes": 75935,
+  "rows": 624,
+  "md5": "adcb3cb37022ca75337af248e3955e01",
+  "pulled_at": "2026-10-12",
+  "description": "Hourly profile per counter and daytype: id,name,lat,lon,interval_min,daytype,hour,sum_counts_2024,n_intervals_2024,mean_count_per_interval (per 15-min interval, or per 60-min for Prospect Park West id 100009425),share_of_day (sums to 1 per id x daytype). 13 counters x 2 daytypes x 24 hours = 624 rows."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/acs/Dem_2024ACS5YR_NTA.xlsx",
+  "source_url": "https://s-media.nyc.gov/agencies/dcp/assets/files/excel/data-tools/population/american-community-survey/Dem_2024ACS5YR_NTA.xlsx",
+  "bytes": 802138,
+  "rows": 262,
+  "md5": "4f6f369857008b6ff5797991f962723a",
+  "pulled_at": "2026-10-12",
+  "description": "DCP ACS 2020-2024 5-year Demographic Profile by NTA-2020 (sheet DemData: 262 rows x 535 cols = 106 variables x E/M/C/P/Z + 5 id cols; sheets 'Data Dictionary', 'About'). Age bands (PopU5..Pop85pl, PopU181, Pop65pl1), race/Hispanic (Hsp1, WtNH, BlNH, AsnNH, OthNH, Rc2plNH, AIANNH, NHPINH)."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/acs/Soc_2024ACS5YR_NTA.xlsx",
+  "source_url": "https://s-media.nyc.gov/agencies/dcp/assets/files/excel/data-tools/population/american-community-survey/Soc_2024ACS5YR_NTA.xlsx",
+  "bytes": 3316837,
+  "rows": 262,
+  "md5": "41e914c83245faeb1c471ee9d881e951",
+  "pulled_at": "2026-10-12",
+  "description": "DCP ACS 2020-2024 5-year Social Profile by NTA-2020 (sheet SocData: 262 x 2280 = 455 variables). Households HH1, FamChU18 (B11003), NFamA (B11001 living alone), HH1plU18, HHPop (pop in households), SE_ClgGSc (enrolled college/grad), CvPop18pl."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/acs/Econ_2024ACS5YR_NTA.xlsx",
+  "source_url": "https://s-media.nyc.gov/agencies/dcp/assets/files/excel/data-tools/population/american-community-survey/Econ_2024ACS5YR_NTA.xlsx",
+  "bytes": 1841929,
+  "rows": 262,
+  "md5": "6a3643b5660a274dd96d312146a5e9ed",
+  "pulled_at": "2026-10-12",
+  "description": "DCP ACS 2020-2024 5-year Economic Profile by NTA-2020 (sheet EconData: 262 x 660 = 131 variables). Ratio of income to poverty B17024 (PopPvU2, PvU50..Pv500pl), Inc_SNAP, HH2, OChU6/OCh6t17 (own children, persons), MdHHInc, PerCapInc."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/acs/Hous_2024ACS5YR_NTA.xlsx",
+  "source_url": "https://s-media.nyc.gov/agencies/dcp/assets/files/excel/data-tools/population/american-community-survey/Hous_2024ACS5YR_NTA.xlsx",
+  "bytes": 838723,
+  "rows": 262,
+  "md5": "01fa7c091af0f95c752d78f97ef24f51",
+  "pulled_at": "2026-10-12",
+  "description": "DCP ACS 2020-2024 5-year Housing Profile by NTA-2020 (sheet HousData: 262 x 520 = 103 variables). Not needed for the demand model; kept for completeness (vehicles available NoVhclAv, rent MdGR, tenure)."
+ },
+ {
+  "path": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/data/raw/acs/nta2020.geojson",
+  "source_url": "https://data.cityofnewyork.us/api/geospatial/9nt8-h7nd?method=export&format=GeoJSON",
+  "bytes": 4589227,
+  "rows": 262,
+  "md5": "64606516a4ab9698e73dbe97f13bd293",
+  "pulled_at": "2026-10-12",
+  "description": "DCP 2020 Neighborhood Tabulation Areas polygons (NYC Open Data 9nt8-h7nd), 262 features, WGS84 lon/lat (no crs member = GeoJSON default). Properties: nta2020 (join key = GeoID in the Excel files), ntaname, ntatype (0 res,5,6,7,8,9), borocode, boroname, countyfips, cdta2020, cdtaname, shape_area (sq ft), shape_leng."
+ }
+]

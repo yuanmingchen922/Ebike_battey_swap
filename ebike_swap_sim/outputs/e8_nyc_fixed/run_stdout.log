@@ -1,0 +1,25 @@
+[17:43:08] busiest seed 0
+  [busiest seed 0] arcs 729,139 (1.5s) baseline 1374.68 USD, unserved 5, fams {"(18)": 1}, swaps 9
+  [busiest seed 0] ilp OPTIMAL 706.0833333333334 gap 0.0 60.0s start baseline_round1/True
+  [busiest seed 0] ilp_relaxed OPTIMAL 705.87 gap 0.0 55.5s start default/True
+[17:45:21] grid seed 0
+  [grid seed 0] arcs 720,006 (1.7s) baseline 1338.39 USD, unserved 5, fams {"(18)": 1}, swaps 9
+  [grid seed 0] ilp OPTIMAL 706.1553333333334 gap 0.0 54.2s start baseline_round1/True
+  [grid seed 0] ilp_relaxed OPTIMAL 705.942 gap 0.0 51.0s start default/True
+[17:47:20] busiest seed 1
+  [busiest seed 1] arcs 530,382 (1.4s) baseline 1043.48 USD, unserved 6, fams {}, swaps 6
+  [busiest seed 1] ilp OPTIMAL 671.5057777777778 gap 0.0 34.3s start default/True
+  [busiest seed 1] ilp_relaxed OPTIMAL 671.328 gap 0.0 31.7s start default/True
+[17:48:37] grid seed 1
+  [grid seed 1] arcs 525,584 (1.4s) baseline 1085.71 USD, unserved 7, fams {}, swaps 7
+  [grid seed 1] ilp OPTIMAL 671.7577777777777 gap 0.0 28.1s start default/True
+  [grid seed 1] ilp_relaxed OPTIMAL 671.58 gap 0.0 34.1s start default/True
+[17:49:50] busiest seed 2
+  [busiest seed 2] arcs 511,370 (1.0s) baseline 882.69 USD, unserved 6, fams {"(17)": 1}, swaps 8
+  [busiest seed 2] ilp OPTIMAL 661.1557777777778 gap 0.0 36.7s start baseline_round1/True
+  [busiest seed 2] ilp_relaxed OPTIMAL 660.906 gap 0.0 36.3s start default/True
+[17:51:13] grid seed 2
+  [grid seed 2] arcs 490,210 (1.0s) baseline 802.70 USD, unserved 5, fams {}, swaps 7
+  [grid seed 2] ilp OPTIMAL 661.0104444444445 gap 0.0 35.7s start default/True
+  [grid seed 2] ilp_relaxed OPTIMAL 660.726 gap 0.0 29.7s start default/True
+done: /Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e8_nyc_fixed/RESULTS.md (9.4 min)

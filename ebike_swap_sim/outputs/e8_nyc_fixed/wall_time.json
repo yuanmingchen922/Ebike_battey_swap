@@ -1,0 +1,1 @@
+{"wall_s": 562.3517552909907, "time_limit": 300.0, "threads": 3, "seeds": [0, 1, 2], "sitings": ["busiest", "grid"], "methods": ["baseline", "ilp", "ilp_relaxed"], "pruning_targets": "facilities", "demand_md5": {"0": "7e2a8619f28c772c592928cee90d87d0", "1": "be2918de22e8a93b5ad24cb5aa53713e", "2": "0a7465f65cfc19a842b2cddfdf2b4dc5"}}

@@ -1,0 +1,547 @@
+{
+ "meta": {
+  "created": "2026-10-12",
+  "currency": "USD, 2025-2026 prices",
+  "Delta_h": 0.08333333333333333,
+  "window_h": 4.0,
+  "operating_hours_per_day": 16.0,
+  "discount_rate": {
+   "low": 0.05,
+   "base": 0.07,
+   "high": 0.1
+  },
+  "battery_kwh": 0.6,
+  "eps_kwh": 0.05,
+  "eta": 0.9,
+  "model": "E2 objective (26)-(32), budget (33); notes/extracted/E2.txt p.9",
+  "allocation_rule": "annual cost = capex x CRF(r, life) + opex; per-window = annual / 12 / 30 days x window_h / operating_hours_per_day (16 h). Scale F, F_hub, bB, bC linearly in window_h (2 h -> x0.5, 8 h -> x2).",
+  "labour_facts": {
+   "dcwp_min_pay": {
+    "2024": 19.56,
+    "2025": 21.44,
+    "2026": 22.13
+   },
+   "dcwp_alt_method_trip_time_rate": {
+    "2024": 32.6,
+    "2025": 35.73,
+    "2026": 36.88
+   },
+   "dcwp_q4_2024": {
+    "trip_hours_k": 888,
+    "oncall_hours_k": 186,
+    "weekly_pay_musd": 21.2,
+    "deliveries_m": 2.72,
+    "deliveries_per_hour": 2.53,
+    "pay_per_hour": 19.78,
+    "earnings_per_hour": 22.28,
+    "avg_subtotal": 29.04,
+    "consumer_fees": 7.55,
+    "merchant_fees": 5.7,
+    "merchant_fee_share": 0.196,
+    "avg_tip": 0.99,
+    "avg_total_order_cost": 40.15
+   },
+   "pay_per_trip_hour_q4_2024": 23.87,
+   "trip_minutes_per_delivery_q4_2024": 19.6,
+   "speed_kmh": {
+    "low": 12.0,
+    "base": 15.0,
+    "high": 19.0
+   }
+  }
+ },
+ "coefficients": [
+  {
+   "symbol": "kappa",
+   "meaning": "bike travel cost (29)",
+   "model_unit": "$ per km",
+   "base": 0.5,
+   "low": 0.12,
+   "high": 1.6,
+   "derivation": "labour = wage/speed = 22.13/15.0 = 1.475 $/km; wear = bike 1600.0/20000 km + maintenance 450.0/10000 km = 0.125 $/km; full = 1.60; option A (default) = wear + 25% uncaptured labour share (repositioning / swap trips not inside any order's response window) = 0.49 -> 0.5; low = wear-only 0.12; high = full 1.6",
+   "sources": [
+    "https://www.nyc.gov/site/dca/workers/Delivery-Worker-Public-Hearing-Minimum-Pay-Rate.page",
+    "https://electrek.co/2025/06/05/its-official-nyc-will-impose-a-new-15-mph-speed-limit-on-electric-bikes/",
+    "https://www.getwhizz.com/blog/how-to-choose/whizz-or-arrow",
+    "https://c2smart.engineering.nyu.edu/wp-content/uploads/2026/04/25-38-NYC-Delivery-Worker-Data-Collection-and-Research-Report.pdf",
+    "https://therideshareguy.com/you-cant-claim-standard-mileage-on-an-e-bike-what-couriers-should-track-instead/",
+    "https://hovsco.com/blogs/news/what-are-e-bike-annual-maintenance-costs"
+   ],
+   "confidence": "medium",
+   "wear_only": 0.125,
+   "labour_per_km": 1.475,
+   "full": 1.6,
+   "wear_components": {
+    "bike_depreciation": 0.08,
+    "maintenance": 0.045
+   },
+   "recommendation": "Use option A base (0.50 $/km) with w_i including rider pay; if the implementation allows arc-type kappa, price deliver arcs at wear-only (0.12) and reposition/swap arcs at full (1.60)."
+  },
+  {
+   "symbol": "w_i",
+   "meaning": "response time price (31)",
+   "model_unit": "$ per hour of (u_a - r_i)",
+   "base": 40.0,
+   "low": 22.0,
+   "high": 60.0,
+   "derivation": "rider pay 2026 minimum 22.13 $/h (low) + customer value of waiting 18.0 $/h implied by priority fees ($1.99-2.99 for 5-10 min = 12-36 $/h) -> base 40.0; high = alternative-method trip-time rate 36.88 + 24.0 -> 60.0",
+   "sources": [
+    "https://www.nyc.gov/site/dca/workers/Delivery-Worker-Public-Hearing-Minimum-Pay-Rate.page",
+    "https://home4.nyc.gov/assets/dca/downloads/pdf/workers/Restaurant-Delivery-App-Data-Q4-2024.pdf",
+    "https://www.ridester.com/is-doordash-cheaper-than-uber-eats",
+    "https://tecnoblog.net/345906/uber-eats-tera-taxa-para-receber-delivery-mais-rapido/",
+    "https://www.restaurantdive.com/news/majority-of-qsr-fast-casual-diners-would-pay-up-to-5-in-delivery-fees/551257/",
+    "https://www.faa.gov/regulations_policies/policy_guidance/benefit_cost/econ-value-section-1-tx-time.pdf"
+   ],
+   "confidence": "medium",
+   "per_slot": {
+    "low": 1.833,
+    "base": 3.333,
+    "high": 5.0
+   },
+   "components_base": {
+    "rider": 22.13,
+    "customer": 18.0
+   },
+   "option_B_customer_only": {
+    "low": 10.0,
+    "base": 18.0,
+    "high": 30.0
+   }
+  },
+  {
+   "symbol": "v_i",
+   "meaning": "lateness price beyond promise (31)",
+   "model_unit": "$ per hour of [u_a - b_i]+",
+   "base": 80.0,
+   "low": 40.0,
+   "high": 120.0,
+   "derivation": "DashPass $10 credit for >=10 min late (60 $/h), Grubhub Guarantee $5 (20-30 $/h), Uber Eats 20% Uber Cash (~$5.8 on $29 subtotal); plus stated-intent churn (2/3 would stop ordering after a late delivery); base = 2 x w, high = 3 x w, low = $5/15 min + rider pay",
+   "sources": [
+    "https://help.doordash.com/es-us/consumers/article/premium-delivery-terms-and-conditions",
+    "https://www.restaurantdive.com/news/grubhub-gives-diners-perks-to-offset-late-deliveries-lower-competitor-pric/603163/",
+    "https://getcircuit.com/route-planner/blog/expectations-of-delivery"
+   ],
+   "confidence": "low-medium",
+   "per_slot": {
+    "low": 3.333,
+    "base": 6.667,
+    "high": 10.0
+   }
+  },
+  {
+   "symbol": "P_i",
+   "meaning": "unserved order penalty (30)",
+   "model_unit": "$ per order",
+   "base": 30.0,
+   "low": 15.0,
+   "high": 60.0,
+   "derivation": "DCWP Q4 2024 NYC: subtotal 29.04, consumer fees 7.55, merchant fees 5.7 (19.6%); platform fee revenue 13.25 + restaurant incremental contribution 0.40 x 13.18 = 5.27 + churn 10.0 = 28.52 -> 30; low = platform fee revenue only (~13-15); high = total order cost 40.15 + churn 20 = 60.15",
+   "sources": [
+    "https://home4.nyc.gov/assets/dca/downloads/pdf/workers/Restaurant-Delivery-App-Data-Q4-2024.pdf",
+    "https://www.sec.gov/Archives/edgar/data/1792789/000179278926000013/dash-20251231.htm",
+    "https://www.lightspeedhq.com/blog/complete-guide-to-restaurant-profit-margins/",
+    "https://getcircuit.com/route-planner/blog/expectations-of-delivery"
+   ],
+   "confidence": "medium",
+   "derivation_parts": {
+    "platform_fee_revenue": 13.25,
+    "restaurant_gross_contribution": 13.18,
+    "restaurant_incremental_40pct": 5.27,
+    "churn_base": 10.0,
+    "sum_base": 28.52,
+    "high_basis": 60.15
+   }
+  },
+  {
+   "symbol": "pi_jt",
+   "meaning": "electricity price (28)",
+   "model_unit": "$ per kWh purchased",
+   "base": 0.32,
+   "low": 0.22,
+   "high": 0.4,
+   "derivation": "Con Edison SC2 (small commercial, NYC Zone J): supply Rate I 0.1206 (trailing 12 m Jul-2025..Jun-2026) + standard delivery 0.1719 (Oct-May) / 0.2038 (Jun-Sep), x1.08 taxes/surcharges -> 0.316 / 0.350; low = NY statewide commercial average (EIA/NYSERDA 20.4-22.3 c); high = summer + margin",
+   "sources": [
+    "https://www.coned.com/-/media/files/coned/documents/business-partners/escos-news/con-edison-trailing-12-month-average-supply-prices.pdf",
+    "https://www.coned.com/en/accounts-billing/your-bill/time-of-use",
+    "https://coned.com/en/accounts-billing/your-bill/about-con-edisons-rates",
+    "https://www.nyserda.ny.gov/Energy-Prices/Electricity/Monthly-Avg-Electricity-Commercial"
+   ],
+   "confidence": "high",
+   "tou_variant": {
+    "peak_other": 0.442,
+    "peak_summer": 0.74,
+    "offpeak": 0.132,
+    "peak_hours": "Mon-Fri 08:00-22:00",
+    "note": "SC2 TOU: delivery peak 26.80 c (Oct-May) / 54.43 c (Jun-Sep), off-peak 1.99 c; supply Rate II on 14.09 c / off 10.25 c. Dinner window is entirely in peak; set generator peak_hours to (8,22) when using TOU."
+   },
+   "cost_per_level_eps_over_eta": {
+    "low": 0.0122,
+    "base": 0.0178,
+    "high": 0.0222
+   },
+   "cost_per_full_600Wh_charge": {
+    "low": 0.147,
+    "base": 0.213,
+    "high": 0.267
+   },
+   "battery_cycle_wear_per_kwh_charged": {
+    "low": 0.5,
+    "base": 0.833,
+    "high": 1.458
+   },
+   "pi_effective_with_battery_wear": {
+    "low": 0.72,
+    "base": 1.153,
+    "high": 1.858
+   }
+  },
+  {
+   "symbol": "f_e",
+   "meaning": "shuttle service activation (32)",
+   "model_unit": "$ per activated service",
+   "base": 20.0,
+   "low": 12.0,
+   "high": 35.0,
+   "derivation": "cargo-bike courier: BLS couriers NYC metro mean 22.06 $/h (May 2023) -> 24.0 (2025/26) x1.3 loaded + cargo e-bike 1.83 $/h = 33.0 $/h x (25 min trip + 10 min handling) = 19.3 -> 20; low: 25 min at 30.5 $/h = 12.7 -> 12; high: van 40 min x 32.5 + 0.83 $/mi x 3 mi + $9 CBD toll = 33.2 -> 35; market check: Metrobi $10-15 per stop",
+   "sources": [
+    "https://www.bls.gov/oes/2023/may/oes435021.htm",
+    "https://www.bls.gov/oes/2023/may/oes533033.htm",
+    "https://caredge.com/ford/e-transit-350-cargo-van",
+    "https://ecommercefastlane.com/best-courier-services-new-york-city/",
+    "https://ny1.com/nyc/manhattan/news/2025/01/15/microhub--pilot-program-aims-to-cure-delivery-truck-headaches"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "symbol": "v_reb",
+   "meaning": "per battery transported (32)",
+   "model_unit": "$ per battery moved",
+   "base": 1.0,
+   "low": 0.5,
+   "high": 2.5,
+   "derivation": "handling 2 x 0.5-1 min per battery at ~33 $/h loaded (0.55-1.1) + payload opportunity cost on a U=6 cargo bike; high includes van loading/unloading and breakage allowance",
+   "sources": [
+    "https://www.bls.gov/oes/2023/may/oes435021.htm"
+   ],
+   "confidence": "low"
+  },
+  {
+   "symbol": "F_j",
+   "meaning": "swap site cost allocated to the 4 h window (27)",
+   "model_unit": "$ per open site per 4 h window",
+   "base": 12.03,
+   "low": 4.04,
+   "high": 29.0,
+   "derivation": "capex 50000 (cabinet ~15k + electrical/conduit ~25k + design/permits ~10k) x CRF(7%,10y)=0.1424 = 7119/yr + opex 10200/yr (site compensation 400/mo, insurance 3000, maintenance/connectivity 2400) = 17319/yr -> /12/30 = 48.11/day x 4/16 = 12.03; low: 20k @5%, opex 3225 (5815/yr); high: 130k @10% (NYSERDA public right-of-way programme ~$3M/25 sites), opex 20600 (41757/yr)",
+   "sources": [
+    "https://www.nyc.gov/html/dot/downloads/pdf/sidewalk-e-bike-battery-swapping-charging-cabinets-101.pdf",
+    "https://eastsidefeed.com/odds-and-ends/two-upper-east-side-locations-made-the-citys-e-bike-charging-shortlist-and-the-clock-is-ticking-to-weigh-in/",
+    "https://m.made-in-china.com/company-hellopower/",
+    "https://vietnamnews.vn/economy/1724555/v-green-launches-battery-swapping-cabinet-franchise-model.html",
+    "https://techcrunch.com/?p=3085306",
+    "https://www.nyc.gov/html/dot/downloads/pdf/safer-charging-safer-deliveries.pdf"
+   ],
+   "confidence": "low",
+   "annual": {
+    "low": 5815.0,
+    "base": 17319.0,
+    "high": 41757.0
+   },
+   "per_day": {
+    "low": 16.15,
+    "base": 48.11,
+    "high": 115.99
+   },
+   "F_hub": {
+    "low": 12.41,
+    "base": 29.19,
+    "high": 63.81
+   },
+   "F_hub_annual": {
+    "low": 17875.0,
+    "base": 42038.0,
+    "high": 91886.0
+   }
+  },
+  {
+   "symbol": "b^B_j",
+   "meaning": "spare battery allocated to the 4 h window incl. initial full charge (27)",
+   "model_unit": "$ per spare battery per 4 h window",
+   "base": 0.332,
+   "low": 0.205,
+   "high": 0.547,
+   "derivation": "600 Wh pack 450.0 (1 kWh class 400-800, Whizz Storm-2 battery $500) x CRF(7%,3y)=0.3811 = 171.5/yr -> 0.119 per 4 h holding + initial charge 0.6/0.9 x 0.32 = 0.213 -> 0.332; cycle life 800-1000 -> 2-4 calendar years at ~1 cycle/day",
+   "sources": [
+    "https://c2smart.engineering.nyu.edu/wp-content/uploads/2026/04/25-38-NYC-Delivery-Worker-Data-Collection-and-Research-Report.pdf",
+    "https://leoguarbikes.com/blogs/news/electric-bike-battery-replacement-cost",
+    "https://radioflyer.com/products/spare-battery-via-via-pro",
+    "https://about.bnef.com/insights/clean-transport/lithium-ion-battery-pack-pr",
+    "https://publications.jrc.ec.europa.eu/repository/handle/JRC144270",
+    "https://www.coned.com/-/media/files/coned/documents/business-partners/escos-news/con-edison-trailing-12-month-average-supply-prices.pdf"
+   ],
+   "confidence": "medium",
+   "holding_only": {
+    "low": 0.059,
+    "base": 0.119,
+    "high": 0.28
+   },
+   "initial_charge": {
+    "low": 0.147,
+    "base": 0.213,
+    "high": 0.267
+   },
+   "variant_1kWh_pack": {
+    "low": 0.313,
+    "base": 0.5,
+    "high": 0.747
+   },
+   "price_per_kWh_pack": 625.0
+  },
+  {
+   "symbol": "b^C_j",
+   "meaning": "charger slot allocated to the 4 h window (27)",
+   "model_unit": "$ per charger per 4 h window",
+   "base": 0.082,
+   "low": 0.015,
+   "high": 0.228,
+   "derivation": "slot capex 400.0 (48 V 5 A UL charger $50-100 + cabinet share) x CRF(7%,5y)=0.2439 + 5% maintenance = 117.6/yr -> 0.082 per 4 h",
+   "sources": [
+    "https://dealers.ebikekit.com/products/48v-charger-dealer",
+    "https://m.made-in-china.com/company-hellopower/",
+    "https://techcrunch.com/?p=3085306"
+   ],
+   "confidence": "low"
+  },
+  {
+   "symbol": "Fhat_j",
+   "meaning": "site investment for budget (33)",
+   "model_unit": "$ per site (undiscounted capex)",
+   "base": 50000.0,
+   "low": 20000.0,
+   "high": 130000.0,
+   "derivation": "same capex as F_j before annualisation",
+   "sources": [
+    "https://www.nyc.gov/html/dot/downloads/pdf/sidewalk-e-bike-battery-swapping-charging-cabinets-101.pdf",
+    "https://eastsidefeed.com/odds-and-ends/two-upper-east-side-locations-made-the-citys-e-bike-charging-shortlist-and-the-clock-is-ticking-to-weigh-in/",
+    "https://vietnamnews.vn/economy/1724555/v-green-launches-battery-swapping-cabinet-franchise-model.html"
+   ],
+   "confidence": "low"
+  },
+  {
+   "symbol": "bhat_j",
+   "meaning": "battery investment for budget (33)",
+   "model_unit": "$ per 600 Wh battery",
+   "base": 450.0,
+   "low": 300.0,
+   "high": 700.0,
+   "derivation": "pack purchase price (1 kWh class: 400/600/800)",
+   "sources": [
+    "https://leoguarbikes.com/blogs/news/electric-bike-battery-replacement-cost",
+    "https://radioflyer.com/products/spare-battery-via-via-pro",
+    "https://c2smart.engineering.nyu.edu/wp-content/uploads/2026/04/25-38-NYC-Delivery-Worker-Data-Collection-and-Research-Report.pdf"
+   ],
+   "confidence": "medium"
+  },
+  {
+   "symbol": "chat_j",
+   "meaning": "charger investment for budget (33)",
+   "model_unit": "$ per charger slot",
+   "base": 400.0,
+   "low": 100.0,
+   "high": 900.0,
+   "derivation": "slot capex incl. cabinet share",
+   "sources": [
+    "https://dealers.ebikekit.com/products/48v-charger-dealer",
+    "https://m.made-in-china.com/company-hellopower/"
+   ],
+   "confidence": "low"
+  }
+ ],
+ "generator_overrides": {
+  "note": "Keys match ebike_swap_sim.generator DEFAULT_COSTS / DEFAULT_DEMAND_SPEC / DEFAULT_SERVICES_SPEC. Values for window_h = 4 (H = 48 at Delta = 5 min). w, v in $/h (generator multiplies by Delta).",
+  "low": {
+   "costs": {
+    "kappa": 0.12,
+    "pi": 0.22,
+    "pi_peak": null,
+    "F": 4.04,
+    "F_hub": 12.41,
+    "bB": 0.205,
+    "bC": 0.015,
+    "Fhat": 20000.0,
+    "bhat": 300.0,
+    "chat": 100.0
+   },
+   "demand_spec": {
+    "P": 15.0,
+    "w": 22.0,
+    "v": 40.0
+   },
+   "services_spec": {
+    "f": 12.0,
+    "vreb": 0.5
+   }
+  },
+  "base": {
+   "costs": {
+    "kappa": 0.5,
+    "pi": 0.32,
+    "pi_peak": null,
+    "F": 12.03,
+    "F_hub": 29.19,
+    "bB": 0.332,
+    "bC": 0.082,
+    "Fhat": 50000.0,
+    "bhat": 450.0,
+    "chat": 400.0
+   },
+   "demand_spec": {
+    "P": 30.0,
+    "w": 40.0,
+    "v": 80.0
+   },
+   "services_spec": {
+    "f": 20.0,
+    "vreb": 1.0
+   }
+  },
+  "high": {
+   "costs": {
+    "kappa": 1.6,
+    "pi": 0.4,
+    "pi_peak": null,
+    "F": 29.0,
+    "F_hub": 63.81,
+    "bB": 0.547,
+    "bC": 0.228,
+    "Fhat": 130000.0,
+    "bhat": 700.0,
+    "chat": 900.0
+   },
+   "demand_spec": {
+    "P": 60.0,
+    "w": 60.0,
+    "v": 120.0
+   },
+   "services_spec": {
+    "f": 35.0,
+    "vreb": 2.5
+   }
+  }
+ },
+ "variants": {
+  "option_B_clean_split": {
+   "costs": {
+    "kappa": 1.6
+   },
+   "demand_spec": {
+    "w": 18.0,
+    "v": 36.0
+   },
+   "note": "kappa = full labour+wear on every arc; w_i = customer value only; no rider labour inside w (avoids pricing prep wait as rider time)."
+  },
+  "tou_electricity": {
+   "costs": {
+    "pi": 0.132,
+    "pi_peak": 0.442
+   },
+   "facilities_spec": {
+    "peak_hours": [
+     8.0,
+     22.0
+    ]
+   },
+   "summer_pi_peak": 0.74
+  },
+  "pi_with_battery_cycle_wear": {
+   "costs": {
+    "pi": 1.153
+   },
+   "note": "adds 450/(900 x 0.6) = 0.83 $/kWh of cycle degradation to each charged level; not in the written model."
+  },
+  "window_2h_H24": {
+   "costs": {
+    "F": 6.01,
+    "F_hub": 14.6,
+    "bB": 0.166,
+    "bC": 0.041
+   }
+  },
+  "window_8h_H96": {
+   "costs": {
+    "F": 24.06,
+    "F_hub": 58.38,
+    "bB": 0.664,
+    "bC": 0.164
+   }
+  }
+ },
+ "toy_vs_usd": {
+  "toy_units": {
+   "kappa": 1,
+   "pi": 2,
+   "P": 100,
+   "w": 12,
+   "v": 24,
+   "f": 5,
+   "v_reb": 0.2,
+   "F": 20,
+   "bB": 3,
+   "bC": 2,
+   "horizon_h": 2
+  },
+  "ratios": [
+   {
+    "label": "toy (E2 p.14, w*Delta=1, response 2 slots)",
+    "P_over_w_resp": 50.0,
+    "travel_over_response": 0.665,
+    "f_over_P": 0.05,
+    "F_over_P": 0.2,
+    "bB_over_P": 0.03,
+    "bC_over_P": 0.02
+   },
+   {
+    "label": "USD base (option A)",
+    "P_over_w_resp": 1.5,
+    "travel_over_response": 0.075,
+    "f_over_P": 0.667,
+    "F_over_P": 0.401,
+    "bB_over_P": 0.0111,
+    "bC_over_P": 0.0027
+   },
+   {
+    "label": "USD option B (kappa full, w customer-only)",
+    "P_over_w_resp": 3.33,
+    "travel_over_response": 0.533,
+    "f_over_P": 0.667,
+    "F_over_P": 0.401,
+    "bB_over_P": 0.0111,
+    "bC_over_P": 0.0027
+   },
+   {
+    "label": "USD P low / w high",
+    "P_over_w_resp": 0.5,
+    "travel_over_response": 0.05,
+    "f_over_P": 1.333,
+    "F_over_P": 0.802,
+    "bB_over_P": 0.0221,
+    "bC_over_P": 0.0055
+   },
+   {
+    "label": "USD P high / w low",
+    "P_over_w_resp": 5.45,
+    "travel_over_response": 0.136,
+    "f_over_P": 0.333,
+    "F_over_P": 0.2,
+    "bB_over_P": 0.0055,
+    "bC_over_P": 0.0014
+   }
+  ],
+  "assumptions": "USD ratios use a typical response of 0.5 h (prep 10-25 min + handling 4.5 min + ~8 min riding) and 3 km bike travel per order.",
+  "drop_threshold_base": {
+   "note": "serving costs w*(u_a-r_i) + kappa*d (+ v lateness); dropping costs P. With P=30, w=40: serve iff response < 45 min minus travel/lateness; prep wait of 17.5 min alone consumes 11.7 of the 30.",
+   "response_minutes_where_P_equals_w_resp": 45.0
+  }
+ }
+}
