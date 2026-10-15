@@ -11,8 +11,9 @@ recursion, arc construction rules, model switches; round 2, sections R2.1-R2.4: 
 variants, the `usd4h` / `usd8h` instance families, the revised baseline rules, the real
 NYC data pipeline; "R2 implementation notes" at the end records the sizes actually chosen;
 round 3, sections R3.1-R3.3: the hard service-share constraint (33) replacing the lexicographic
-variant, end targets kept, the solve / reuse protocol and the extended seed sets).
-The module API contract is in [`CONTRACT.md`](CONTRACT.md).
+variant, end targets kept, the solve / reuse protocol and the extended seed sets; round 4, "E9
+relaunch decisions" E9R.1-E9R.4: the bi-level siting family, search rules and reposition
+conventions). The module API contract is in [`CONTRACT.md`](CONTRACT.md).
 
 The E2 mathematics (`ilp.py`, `arcs.py`, `evaluate.py`) is unchanged since round 1; the
 toy reference values 12.5 / 11.2 / 106 are reproduced by `experiments/e1_toy.py`.
@@ -37,7 +38,11 @@ ebike_swap_sim/                 run everything from here with PYTHONPATH=.
 │   ├── data_nyc.py             R2.4 semi-real NYC: StudyBox projection, DOHMH restaurants -> Kaggle cuisines,
 │   │                           NTA point-in-polygon, GeoDa fallback zone weights, crash / counter loaders,
 │   │                           make_nyc_instance()
-│   └── acs_weights.py          R2.4 literature zone weights from the ACS 2020-24 NTA tables (ACSZoneWeights)
+│   ├── acs_weights.py          R2.4 literature zone weights from the ACS 2020-24 NTA tables (ACSZoneWeights)
+│   ├── sites_nyc.py            E9: the 12 Midtown candidate sites, siting families / size menus, layout -> instance,
+│   │                           admissibility rules, siting pruning (all_candidates / open_sites), sub-libraries
+│   └── bilevel.py              E9: Layout, LowerLevelEvaluator (cached E2 solves per scenario), exhaustive,
+│                               greedy_local_search, deck_heuristic, integrated_stochastic_ilp, cross_evaluate, [U4]
 ├── experiments/
 │   ├── common.py               instance families, pruning defaults, baseline variants, run_pair(), output helpers
 │   ├── e1_toy.py               E1: toy reproduction (12.5 / 11.2 / 106 / lexicographic / baselines / p.7 / identities)
@@ -49,13 +54,18 @@ ebike_swap_sim/                 run everything from here with PYTHONPATH=.
 │   ├── e2u_round3.py, e3u_round3.py, e4u_round3.py, e8_round3.py   round-3 scripts (R3.3: fill every cell, reuse
 │   │                           round-2 rows only if OPTIMAL / gap <= 1 %, zeta cells, more seeds; --dry-run /
 │   │                           --smoke / --analyse); e3u_round3_report.py builds the E3u report from records.jsonl
+│   ├── e9_bilevel_siting.py    round-4 bi-level siting (E9.1-E9.6: --validate / --sweep / --roles / --deck / --cross /
+│   │                           --access; --dry-run / --smoke; outputs/e9_bilevel/<sub>/)
 │   ├── r2_size_probe.py        round-2 size probe (R2.2): arcs / binaries / solve time per family and size
 │   └── r2_cost_variants.py     round-2 cost-variant comparison (R2.1 degenerate-objective check)
-├── tests/                      pytest suite (core, ilp, baseline, generator, costs, data_nyc, acs_weights, experiments, round3)
+├── tests/                      pytest suite, 158 tests (core, ilp, baseline, generator, costs, data_nyc, acs_weights,
+│                               experiments, round3, bilevel)
 ├── outputs/                    experiment outputs; round 1: e1/, e2_smoke/, e2_coord/, e2_coord_v2/, e3/, e4_sizing/;
 │                               round 2: r2_probe/, e2u_coord_usd/, e3u/, e4u_sizing_usd/, e8_nyc_fixed/;
 │                               round 3 (authoritative): e2u_round3/, e3u_round3/, e4u_round3/, e8_round3/ (each with a
-│                               RESULTS_final.md; e8_nyc/ is the superseded pre-fix run, see "Outputs index")
+│                               RESULTS_final.md; e8_nyc/ is the superseded pre-fix run, see "Outputs index");
+│                               round 4: e9_bilevel/ (RESULTS_E9.md + six sub-folders with RESULTS_final.md;
+│                               _first_attempt/ is superseded)
 ├── CONTRACT.md                 API contract between the modules
 └── pytest.ini                  pythonpath = . so tests run without PYTHONPATH
 ```
@@ -123,7 +133,7 @@ run with `OutputFlag=0`, `Threads=3` (round-2 rule; round-1 outputs used 4) and 
 cd ebike_swap_sim
 export PYTHONPATH=$PWD
 
-# tests (about 90 s with the data-driven tests; 125 tests)
+# tests (about 2 min with the data-driven tests; 158 tests)
 python3 -m pytest tests -x -q
 
 # E1: toy reproduction -> outputs/e1/results.csv, RESULTS.md, figures
@@ -140,6 +150,11 @@ python3 experiments/r2_cost_variants.py --family usd4h --seed 0 --variants usd_s
 # --analyse rebuilds results.csv / RESULTS.md / figures from records.jsonl without solving)
 python3 experiments/e2u_round3.py --dry-run
 python3 experiments/e8_round3.py --analyse
+
+# round-4 bi-level siting (E9); --smoke runs the toy siting instances in seconds, --dry-run lists the plan
+python3 experiments/e9_bilevel_siting.py --sweep --smoke
+python3 experiments/e9_bilevel_siting.py --validate --dry-run
+python3 experiments/e9_bilevel_siting.py --sweep --budgets 1 --seeds 0 1 2 --wall-budget 3600
 
 # zone-weight table from the ACS files -> notes/data/zone_weights_manhattan.csv
 python3 -m ebike_swap_sim.acs_weights
@@ -305,13 +320,95 @@ same policy under both target settings), `unservable_orders`, `demand_key` / `de
 | `outputs/e3u_round3/` | **round-3 E3u** transfers / separation, 5 seeds, all 60 ILP cells (600 s re-solves of the separated / written / transfers-free cells) | **`RESULTS_final.md`** |
 | `outputs/e4u_round3/` | **round-3 E4u** station sizing, 6 seeds on the B sweep / default / free size, P sweep and seed-0 B x C grid complete (`summary_*.csv`, `_analysis_final.json`) | **`RESULTS_final.md`** |
 | `outputs/e8_round3/` | **round-3 E8** semi-real NYC, 10 seeds x 2 sitings (`per_instance.csv`, `siting.csv`, `demand_comparison.json`, `map_seed0.png`) | **`RESULTS_final.md`** |
+| `outputs/e9_bilevel/` | **round-4 E9** bi-level siting on `nyc4h_stress2`: consolidated report, `candidates.csv` / `.json`, `launch2.json`, `logs/`, shared lower-level `cache/` | **`RESULTS_E9.md`** |
+| `outputs/e9_bilevel/validate/` | E9.1 exhaustive enumeration vs integrated stochastic ILP (4 candidates, 2 seeds, m = 1) | **`RESULTS_final.md`** (`agreement.json`, `layouts_m1.png`, `map_validate_m1.png`, `solve_times_m1.png`) |
+| `outputs/e9_bilevel/sweep/` | E9.2 greedy + local search per budget m = 1..4, Pareto curve, integrated bound | **`RESULTS_final.md`** (`pareto.csv`, `map_sites_final.png`, `pareto_final.png`, `greedy_trajectory_final.png`; `pareto.png` draws a meaningless bound) |
+| `outputs/e9_bilevel/roles/` | E9.3 role sets {SC}, {S, SC}, {S, C, SC} at m = 2, 3 | **`RESULTS_final.md`** (`roles_priced_moves.png`, `roles_components.png`, `roles_map.png`) |
+| `outputs/e9_bilevel/deck/` | E9.4 proposal deck heuristic vs bi-level, m = 1..4 | **`RESULTS_final.md`** (`deck_vs_bilevel_final.png`, `map_deck_vs_bilevel.png`, `deck_demand_proxy.png`) |
+| `outputs/e9_bilevel/cross/` | E9.5 cross-evaluation of 7 chosen layouts under ILP / baseline / relaxed ILP, 5 seeds | **`RESULTS_final.md`** (`cross_eval.csv`, `cross_eval_final.png`) |
+| `outputs/e9_bilevel/access/` | E9.6 access row [U4] at D = 8 / 12 blocks, m = 2, 3 (D = 8, m = 3 truncated) | **`RESULTS_final.md`** (`access_map.png`, `access_coverage.png`, `access.png`, `access_search.png`) |
+| `outputs/e9_bilevel/_first_attempt/` | superseded first E9 launch on `nyc4h_stress` (8 bikes); degenerate, do not quote | `README.md` (the four failures) |
 
-The script-written `RESULTS.md` files in the round-2 and round-3 directories are intermediate (some were
+The script-written `RESULTS.md` files in the round-2, round-3 and E9 directories are intermediate (some were
 written from partial records; the E3u round-3 one is a stub after the script's `--analyse` step failed);
 `RESULTS_final.md` is the deliverable in each. The round-3 directories supersede the round-2 ones for every
 quoted number (the round-2 rows they reuse are byte-identical). The project synthesis across rounds is
-`../notes/SUMMARY.md` (round 1 in sections 1-6, then "Round 2 (2026-10-12)" and "Round 3 (2026-10-12/13)");
-the round-3 headline numbers are also collected in `../notes/workflow8_round3_reports_a.json`.
+`../notes/SUMMARY.md` (round 1 in sections 1-6, then "Round 2 (2026-10-12)", "Round 3 (2026-10-12/13)" and
+"Round 4 (2026-10-14): bi-level station siting (E9)"); the round-3 headline numbers are also collected in
+`../notes/workflow8_round3_reports_a.json`.
+
+## Bi-level siting (E9, `ebike_swap_sim/sites_nyc.py`, `ebike_swap_sim/bilevel.py`, `experiments/e9_bilevel_siting.py`)
+
+Design: `../notes/bilevel_siting_design.md`. Leader = planner (which candidate locations to open, role
+`S` swap-only / `C` charge-only hub / `SC` co-located, spares `B_j`, chargers `C_j`, under the investment
+budget (33a)); follower = the written E2 operations ILP with the facilities fixed, one solve per demand
+scenario (seed). Objective `Phi = sum_j (F_j y_j + bB_j B_j + bC_j C_j) + sum_s p_s OPEX_s`; optimistic
+bi-level, which collapses to one two-stage stochastic ILP when no planner-only row is present (the exact
+benchmark). Family `nyc4h_stress2` (6 bikes / 36 orders, `q0 ~ U{3..6}`, B 1 / C 1 / 2.8 kW sites / 4 kW
+grid; the relaunch family of `../notes/DECISIONS.md` "E9 relaunch decisions", a single SC site serves >= 70 %)
+is the default; the first attempt's `nyc4h_stress` (8 bikes / 48 orders, `q0 ~ U{2..4}`, too stressed:
+one-site layouts served 7 %) stays selectable with `--family nyc4h_stress`. Rules of the relaunch: swap-only
+sites only next to a C / SC object (`sites_nyc.layout_admissible`, also rows of the integrated model); the
+greedy starts from the best singleton by lower-level V (per-role baseline screen, exhaustive singletons as
+fallback), discards moves that are infeasible or serve < `--min-served` (0.5), reports `wall budget
+exhausted` / `no feasible layout` with the status counts of the priced layouts, records lower-level
+exceptions as `ERROR` rows, and treats the access row [U4] as repair + report (uncovered zones are listed,
+never enforced on the search). Reposition targets: `--validate` keeps the all-candidates template so that
+(A) and (B) price the same arcs; the search sub-commands price per-layout libraries (open sites + depots,
+E8 convention, `--reposition open_sites`).
+
+* `sites_nyc.candidate_sites()` -- 12 candidates of the Midtown box (6 busiest restaurant cells, 3
+  landmarks, 3 zone centres; Penn Station merged into L01), `make_base_instance` (every candidate in V,
+  bikes at the three busiest cells, no facilities; demand byte-identical across layouts),
+  `layout_instance` / `all_candidates_instance` (one E2 facility object per `(location, role)`, shuttle
+  services between charge-capable and swap-capable objects), `siting_pruning(targets='all_candidates' |
+  'open_sites')` (reposition targets = all candidates + depots, shared by every layout of a scenario, or the
+  open sites + depots of one layout), `subset_library` (layout library derived from the all-candidates
+  template, identical to `build_arcs`), `SITING_FAMILIES` / `SIZE_MENUS` / `layout_admissible`.
+* `bilevel.Layout`, `LowerLevelEvaluator` (certified lower-level values, persistent JSONL cache under
+  `outputs/e9_bilevel/cache/`, baseline warm starts, superset lower bound, scenario-by-scenario pruning,
+  `reposition` mode, `ERROR` rows for exceptions),
+  `exhaustive` (B), `greedy_local_search` (C), `deck_heuristic` (D), `integrated_stochastic_ilp` (A: one
+  Gurobi model with shared `y, B, C` and one `ilp.ILPModel` sub-model per scenario through the new
+  `model / prefix / facility_vars / set_objective` arguments of `ILPModel`), `cross_evaluate` (E),
+  `access_sets` / `layout_covers` ([U4]).
+* `experiments/e9_bilevel_siting.py --validate | --sweep | --roles | --deck | --cross | --access`
+  (E9.1-E9.6), each with `--dry-run` / `--smoke` (toy siting instances, seconds) and a `--wall-budget`;
+  outputs under `outputs/e9_bilevel/<sub>/` (`records.jsonl`, `results.csv`, figures, `RESULTS.md`).
+  `tests/test_bilevel.py` checks, at toy scale, that the integrated ILP equals the exhaustive
+  enumeration, that the greedy recovers the toy optimum, the cache, the budget, the demand invariance,
+  the role semantics and the candidate rules, plus the relaunch regressions (a role set with S finds at
+  least the SC_only optimum, the start is the best singleton by V, the access row reports instead of
+  enforcing, wall exhaustion and exceptions are reported, not mistaken for infeasibility, and the
+  `nyc4h_stress2` sanity bar). First-attempt outputs: `outputs/e9_bilevel/_first_attempt/`.
+
+**Results (2026-10-14).** The consolidated report is `outputs/e9_bilevel/RESULTS_E9.md`; it names the source of
+every number, and the authoritative numbers live in the six sub-reports
+`outputs/e9_bilevel/{validate,sweep,roles,deck,access,cross}/RESULTS_final.md` with the figures in those folders
+(see the Outputs index). Headline on `nyc4h_stress2` (3 seeds in the search, 5 in the cross-evaluation):
+
+* Chosen layout at every budget m = 1..4: one co-located site `L02:SC:B3:C2` (m = 1, 52,150 USD invested) or
+  `L02:SC:B4:C2` (m >= 2, 52,600 USD), V = 654.38 / 654.53 USD per 4 h window (13.2-13.5 setup + 641 opex),
+  served share 0.852; budget beyond one unit unspent (51,700 / 103,850 / 156,000 USD at m = 2 / 3 / 4), the
+  Pareto frontier is one point plus the 450 USD fourth spare (`sweep/`).
+* A second site never pays: +11.9 to +12.2 USD per window for an S / SC site, +29.4 USD for a hub, against an
+  operating saving of at most 1.09 USD; `transfers_used = 0` in all 84 solves of the roles run; role sets {SC},
+  {S, SC}, {S, C, SC} give the identical optimum at m = 2 and 3 (`sweep/`, `roles/`).
+* E9.1: exhaustive enumeration = integrated stochastic ILP at `L02:SC:B2:C1`, V 676.22 (4 candidates, 2 seeds,
+  m = 1, menu B <= 2); integrated bound 668.04 (gap 1.21 %); at full size (5.35 M variables) the integrated
+  model gives no usable bound in 600 s, so the m = 2..4 answers are heuristic incumbents (`validate/`, `sweep/`).
+* Deck heuristic regret 0.68 / 12.56 / 25.53 / 38.78 USD = 0.10 / 1.92 / 3.90 / 5.93 % at m = 1..4, almost
+  exactly the setup of the extra sites it opens (`deck/`).
+* Access row [U4]: +12.08 USD per window (+1.85 %) and +50,450 USD for the second site L05 at D = 8 and D = 12;
+  served share unchanged; 11 / 11 zones covered at D = 12, 8 / 11 at D = 8 (MN0801 is beyond 8 blocks of every
+  candidate); the D = 8, m = 3 search was truncated by the wall budget (`access/`).
+* Cross-evaluation on 5 seeds: location robust to the operating policy (L02 under both, L01 a tie), size not
+  (the policy values the fourth spare at 47.4 USD, the coordinator at 0.15 USD); ILP beats the baseline policy by
+  31.1-41.3 % on every layout; in-sample vs out-of-sample ILP opex within 4.2 USD (`cross/`).
+* Structural reading: for the coordinator the fleet (6 bikes, 4 h, q0 3-6) binds, not the batteries (served
+  0.852 for every layout with B >= 3), so siting moves only travel and electricity. Known artefacts: the B = 4
+  answer lies outside the enumeration menu, the m >= 2 value is 0.15 USD above the m = 1 layout (local search
+  restarts per budget), and the first launch (`_first_attempt/`) is degenerate and superseded.
 
 ## Pointers
 

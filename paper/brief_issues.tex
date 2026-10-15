@@ -1,0 +1,131 @@
+% brief_issues.tex -- issue boxes for the supervisor brief (no preamble).
+% Environments \begin{issuebox}{<title>} and \begin{notebox}{<title>} are defined by the assembler.
+% Every number below is copied from a report; the source file is given in a LaTeX comment.
+% Vocabulary: "plan" = E2 integer program, "rule" = baseline policy, "USD" after the number, "dropped" = unserved.
+% Order: Issues 1-3 could change the headline; 4-6 limit what we can claim; 7-12 are housekeeping (one table).
+
+\noindent\textbf{How to read:} Issues 1--3 could change the headline; Issues 4--6 limit what we can claim; Issues 7--12 are housekeeping (one table); Issues 13--15 concern the siting study (E9).
+
+% ---------------------------------------------------------------------------
+% 1. Foresight vs coordination
+% source: notes/E2_formulation_review.md (SC-2); outputs/e2u_round3/RESULTS_final.md (gap tracks baseline lateness r = 0.91); outputs/e8_round3/RESULTS_final.md (r = 0.98)
+\begin{issuebox}{Issue 1 -- The 29.6\,\% headline mixes coordination with perfect foresight}
+\textbf{What we saw:} the plan knows all 36 orders at 17:00 (27--30 min before they are ready); the rule learns each order when it is placed. Evening by evening, the gap follows the rule's lateness (correlation 0.91 in E2u, 0.98 in E8).\\
+\textbf{Why it matters:} we cannot say how much of 29.6\,\% $\pm$ 5.6 is \emph{planning together} and how much is \emph{knowing the future}.\\
+\textbf{Status:} open.\\
+\textbf{Next step:} rolling-horizon wrapper (no change to the equations) on the same 30 evenings with look-ahead 0 / 10 / 20 min; what survives at zero look-ahead is coordination proper.
+\end{issuebox}
+
+% ---------------------------------------------------------------------------
+% 2. Battery side never binds
+% source: outputs/e8_round3/RESULTS_final.md (anomaly 8, siting table); outputs/e4u_round3/RESULTS_final.md (sweeps C, P; summary sentence 2); notes/E2_formulation_review.md (SC-1)
+\begin{issuebox}{Issue 2 -- Stations, chargers, grid and shuttles never bind at this scale}
+\textbf{What we saw:} with the targets off the plan buys 0 kWh in 20 of 20 Midtown runs; a charger or a kW is worth 0 USD; moving the stations changes the plan's cost by at most 0.41 USD (0.06\,\%). Detail: peak draw 3.33 kW against a 6--8 kW limit; every spare beyond the second \emph{costs} 0.25--0.31 USD per evening.\\
+\textbf{Why it matters:} three questions of the proposal (station queues, charging, swap-oriented dispatch) have no content on these instances; the whole gain is dispatch.\\
+\textbf{Status:} limitation of the instance, not of the equations.\\
+\textbf{Next step:} energy-stressed family (8 bikes, 48 orders, start charge 2--4 of 12, one spare and one charger per site, 1.4 kW per site), then 8 h windows. Success $=$ a battery constraint with a positive shadow price, or a spare worth more than its 0.332 USD holding cost.
+\end{issuebox}
+
+% ---------------------------------------------------------------------------
+% 3. End-of-day targets manufacture the shuttle value
+% source: outputs/e3u_round3/RESULTS_final.md (Summary, T1, T2); notes/E2_formulation_review.md (SC-4);
+%         outputs/e2u_round3/RESULTS_final.md (targets cost 0.34 USD); outputs/e8_round3/RESULTS_final.md section 2 (0.28 +/- 0.06 busiest, 0.26 +/- 0.05 grid)
+\begin{issuebox}{Issue 3 -- Shuttles are worth 8.6 USD only because of the end-of-day battery targets}
+\textbf{What we saw:} value of shuttles in the separated layouts: 8.6 $\pm$ 10.1 USD with the targets as written, \textbf{0.00 USD on 15 of 15 pairs} with the targets off. Mechanism: the ``one full battery at closing'' target at a swap-only site caps swaps at 4 of 9; one 22 USD shuttle with 2 batteries restores 6 swaps. In co-located layouts the targets cost 0.34 USD (E2u) and 0.28 / 0.26 USD (E8, busiest / landmarks) per evening.\\
+\textbf{Why it matters:} the only reason to ship batteries in a 4 h window is ``be tidy at closing time''; the written transfer result is housekeeping, not replenishment.\\
+\textbf{Status:} parameter choice ($\rho$, $R_{\mathrm{end}}$ are data in E2) -- Decision 1 on page 1.\\
+\textbf{Next step:} set $R_{\mathrm{end}} = 0$ at swap-only sites; report a $\rho \times R_{\mathrm{end}}$ sensitivity grid; use the targets-off control as the like-for-like headline and the written targets as ``price of recovery''.
+\end{issuebox}
+
+% ---------------------------------------------------------------------------
+% 4. 90 % service infeasible at busy demand
+% source: outputs/e2u_round3/RESULTS_final.md (x1.5 table, anomaly 3, solver statistics: 14 TIME_LIMIT without incumbent, 4 INFEASIBLE 175-248 s, max-service solves 129-300 s, 70.9 min; wall 263.2 min); notes/E2_formulation_review.md (B8)
+\begin{issuebox}{Issue 4 -- A 90\,\% service promise is impossible on a busy evening with 6 bikes}
+\textbf{What we saw:} at 54 orders the most any schedule can serve is 74--80\,\% (proven on 6 seeds; at most 83\,\% by bound on the rest) against 90\,\% (49 of 54) or 85\,\% (46) required: infeasible on 10 of 10 seeds at both levels. The cost-optimal plan drops 16.3 orders (30\,\%), the rule 20.2 (37\,\%). Detail: 18 of the 20 busy-evening service-rule cells cost 300--600 s each (14 hit the 300 s limit with no solution found, 4 were proven infeasible in 175--248 s, each followed by a 129--300 s max-service solve), about 2.5 h of the 4.4 h wall.\\
+\textbf{Why it matters:} ``infeasible'' is a fleet-size answer, not a scheduling one, and we have no number for how many bikes would be needed.\\
+\textbf{Status:} open.\\
+\textbf{Next step:} fleet sweep 6--10 bikes at 1.5$\times$ demand with the 90\,\% rule, 10 seeds; solve ``most orders served'' first and skip the cells the bound already rules out.
+\end{issuebox}
+
+% ---------------------------------------------------------------------------
+% 5. Drop penalty vs waiting cost
+% source: notes/SUMMARY.md round 2, 2.1 (usd_A table: 85.2 / 86.1 / 83.3 % vs 5.6 / 11.1 / 35.2 %); outputs/e2u_round3/RESULTS_final.md (anomaly 5: 8/30); outputs/e8_round3/RESULTS_final.md (anomaly 4: 5/20); notes/E2_formulation_review.md (SC-3)
+\begin{issuebox}{Issue 5 -- The wage convention decides whether the plan drops orders; even now it drops more than the rule on 8 of 30 evenings}
+\textbf{What we saw:} with rider wages inside the waiting price (variant \texttt{usd\_A}, 40 USD/h) the plan drops 83--86\,\% of orders against 6--35\,\% for the rule, because serving an ordinary order then costs about 31 USD, more than the 30 USD drop penalty. Under the default \texttt{usd\_sunk} (18 USD/h) the plan still drops more than the rule on 8 of 30 E2u and 5 of 20 E8 evenings: waiting is charged from order placement, so about 29 min of kitchen time (about 8.8 USD) that no schedule can shorten is priced.\\
+\textbf{Why it matters:} the serve / drop margin is set by an accounting convention; readers will see ``the optimiser drops orders'' as a failure.\\
+\textbf{Status:} parameter choice, no equation changes -- Decision 3 on page 1.\\
+\textbf{Next step:} start charging waiting time from when the food is ready, not from when the order is placed (equivalent to raising the drop penalty by the kitchen wait); re-run E2u at normal demand and report the headline under both conventions; keep rider labour sunk and say so.
+\end{issuebox}
+
+% ---------------------------------------------------------------------------
+% 6. NYC pruning restricts only the plan
+% source: outputs/e8_round3/RESULTS_final.md (pruning caveat, Section 10); notes/workflow6_round2_review.json (revFair F2); notes/E2_formulation_review.md (SC-5)
+\begin{issuebox}{Issue 6 -- The Midtown gap (31.8\,\%) is a lower bound: the pruning ties the plan's hands, not the rule's}
+\textbf{What we saw:} to keep the Midtown model solvable the plan may reposition only into the 3 station nodes (0.55 M arcs instead of about 36 M). The rule never repositions elsewhere anyway, so it loses nothing; the plan loses pre-positioning towards restaurants.\\
+\textbf{Why it matters:} the E8 number cannot be quoted as exact; the loss has never been measured.\\
+\textbf{Status:} open (declared in the report, not resolved).\\
+\textbf{Next step:} run the lossless variant on one seed; on the synthetic family the lossless pruning gave identical optima (615.15 / 659.60 USD) with 40\,\% fewer arcs.
+\end{issuebox}
+
+% ---------------------------------------------------------------------------
+% 13-15. Siting study (E9)
+% source: outputs/e9_bilevel/RESULTS_E9.md section 5 (items 1, 2, 3, 4, 6); cross/ and sweep/ RESULTS_final.md; access/RESULTS_final.md; validate/RESULTS_final.md
+\begin{issuebox}{Issue 13 -- In the siting study the fleet binds, not the batteries}
+\textbf{What we saw:} under the plan the served share is 85.2\,\% (85.6\,\% on five seeds), lateness 1.7--1.8 orders and the dropped-order penalty 160 USD for \emph{every} layout with at least three spares, from one site to four; siting and sizing move only riding (11.8--12.4 USD) and electricity (0--0.8 USD).\\
+\textbf{Why it matters:} the stressed family makes station placement matter for the rule but still not for the plan, so the planner learns little beyond ``one site with three or more spares''; the siting question is answered, but on a family where it is nearly degenerate.\\
+\textbf{Status:} open.\\
+\textbf{Next step:} a deeper energy-stressed family (more bikes per site, lower start charge, longer window, or fewer spares per site, since 2 spares is the only size at which the plan reacts) and the same sweep there.
+\end{issuebox}
+
+\begin{issuebox}{Issue 14 -- The siting answers are heuristic incumbents without a certified gap}
+\textbf{What we saw:} the integrated two-stage program on 12 candidates $\times$ 3 scenarios (5.35 M variables) returned only its warm start and no usable bound in 600 s; the only exact check is the small validation protocol (4 candidates, 2 seeds, $\le 2$ spares), where exhaustive enumeration and the integrated program agree on L02 at 676.22 USD (bound 668.04, gap 1.21\,\%). That validation layout (2 spares, 1 charger) is the worst of the seven chosen layouts on the full menu ($+$8.3 USD under the plan, $+$150.6 USD under the rule).\\
+\textbf{Why it matters:} ``one site is optimal'' rests on the exhaustive pricing of every single-site move and on the small-scale agreement, not on a proven bound; the validation certifies the machinery, not the number.\\
+\textbf{Status:} open; acceptable for this brief with the caveat stated.\\
+\textbf{Next step:} longer integrated runs (1,800 s or more) or a decomposition bound; quote the validation layout only as a protocol check, never as the optimum.
+\end{issuebox}
+
+\begin{issuebox}{Issue 15 -- Two search artefacts and a truncated access run (none changes a conclusion)}
+\textbf{What we saw:} (i) the $m \ge 2$ answer (4 spares) lies outside the forward size menu ($\le 3$ spares) because the local search's size move is bounded only by the shelf ($K = 8$), and its value (654.53) is 0.15 USD \emph{worse} than the $m = 1$ layout (654.38), which is feasible at every budget: each budget restarted its search from the forward frontier and hit the 3-pass limit. (ii) With the access rule at 1.2 km the 120 min wall budget expired inside the second repair round: the three-site layout reported there ($+$24.4 USD) is the first usable covering layout, not the best, and one zone (MN0801) cannot be covered at 1.2 km by any candidate.\\
+\textbf{Why it matters:} the per-budget values are not monotone and an enumeration restricted to the menu cannot return the chosen layout (effects 0.15--0.45 USD against 12--39 USD differences); only the 1.8 km access numbers ($+$12.08 USD, 11 of 11 zones) should be quoted.\\
+\textbf{Status:} known, not fixed in this run.\\
+\textbf{Next step:} seed budget $m$ with the results of all lower budgets, let the local search exhaust its passes, align the size move with the menu; price L02 $+$ L05 $+$ L06 and L02 $+$ L06 $+$ L08 directly (6 solves) and run the integrated program with the access rows at 1.8 km, $m = 2$.
+\end{issuebox}
+
+% ---------------------------------------------------------------------------
+% 7-12. Smaller limitations, one table
+% source: 7  outputs/e3u_round3/RESULTS_final.md (T8, anomaly 10: 10 cells, gap 1.79-2.00 %, 600 s; interval [8.6, 22.2] USD)
+%         8  outputs/e8_round3/RESULTS_final.md (geometry caveat, Section 6: 1.80 vs 1.86 km); README.md Section 7
+%         9  notes/cost_calibration.md (Section 0 table: F_j 4.0-29.0 base 12.0 low; v_i 40-120 $/h); E3U (hub rent 56-72 % of separation cost)
+%         10 notes/SUMMARY.md round 2, 1.5 and 4.9 (26.1 % of 4,607 restaurants unreachable; 8.9 % if cafes -> American); notes/literature_demand_model.md Section 6; notes/datasets.md
+%         11 notes/E2_formulation_review.md (B5); notes/SUMMARY.md round 1, 4.6 (64.4 vs 27.8 levels, 6.6 swaps; seed 0 615.146 vs 615.362)
+%         12 outputs/e2u_round3/RESULTS_final.md (seeds 5-9: 21.9 -> 29.6 %, rule 1311 vs 1022 USD, plan 765 vs 727 USD, CV 4-5 % vs 15-22 %); outputs/e4u_round3/RESULTS_final.md (anomaly 8, C / P sweeps n = 3)
+%         (12, for the record: the script figures use z = 1.96, the reports exact t, +/- 5.38 vs +/- 5.61 on the headline; means identical)
+\begin{center}\small
+\begin{tabular}{@{}L{2.4cm}L{7.6cm}L{4.6cm}@{}}
+\multicolumn{3}{@{}l}{\normalsize\textbf{Smaller limitations (Issues 7--12).}}\\[2pt]
+\toprule
+Issue & What & Next step \\
+\midrule
+7 -- Solver gap & 10 E3u cells (separated layout, shuttles allowed) stop where the solver could not prove the answer within 2\,\%, even with 600 s; the shuttle value is an interval 8.6--22.2 USD, and more seeds or minutes will not close it. & Setting $R_{\mathrm{end}} = 0$ at swap-only sites (Issue 3) removes the shuttle and closes these cells. \\
+8 -- Synthetic geometry & Street network, hills and traffic lights are synthetic even in the Midtown instance (real points snapped to a rotated 150 m grid); mean trip 1.80 km vs 1.86 km synthetic. Real data change \emph{where} demand sits, not how far bikes ride. & Connect the city's street centrelines and elevation data to the route library (interface exists). \\
+9 -- Low-confidence prices & Station rent 4--29 USD per 4 h (base 12, confidence low), lateness price 40--120 USD/h, charger and shuttle prices low; hub rent is 56--72\,\% of the separation cost in E3u. & Run the low / high price envelopes already in \texttt{cost\_calibration} as a sensitivity. \\
+10 -- Demand inputs partly assumed & 26.1\,\% of the 4,607 restaurants fall in a cuisine class that is never sampled (cafes, bakeries, desserts); the hourly curve (dinner 45\,\%, lunch 28\,\%, late 12\,\%) is an assumption; the Kaggle order file has no timestamps or coordinates. & Map cafes to ``American'' (unreachable share drops to 8.9\,\%); digitise the city's 2022 hourly delivery-trip chart. \\
+11 -- Energy rounding & Each leg is rounded up to a whole 50 Wh level, so the plan uses 64.4 levels per Midtown evening against 27.8 physical (2.3$\times$) and riders swap about 6.6 times instead of 2--3; the headline gap is unaffected (seed 0 moves 0.2 USD). & Re-run with 25 Wh levels (24 per battery) or whole-route rounding; report swaps under both. \\
+12 -- Wide intervals, few seeds & Intervals are wide because the rule's cost varies 4$\times$ more than the plan's (15--22\,\% vs 4--5\,\% between evenings); seeds 5--9 lifted the E2u gap from 21.9 to 29.6\,\% on the rule's side alone (rule 1,311 vs 1,022 USD, plan 765 vs 727 USD); charger / power sweeps rest on 3 seeds. & Charger / power sweeps on seeds 3--5 (cheap); quote per-level gaps where seeds differ; one interval convention everywhere. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ---------------------------------------------------------------------------
+% Fixed items -- compact list
+% source: notes/SUMMARY.md (round 1 code review: dominance pruning picked a farther bike 23 % of the time, battery dead zone; round 2, 1.6 fairness F1; round 3, 1.1);
+%         outputs/e3u_round3/RESULTS_final.md (15 of 36 cells skipped in round 2, 0 SKIPPED_BUDGET now); outputs/e4u_round3/RESULTS_final.md ("Records used": P sweep 9 + 12 off-line B x C + skipped seed-2 B3_C4_P4 = 22)
+%         (other fixes, for the record only: NYC time-profile ramp (E8 re-run); service-first variant replaced by the hard rule (33); E3u --analyse NaN crash; E4u pooled charger figure; E8 template text)
+\begin{notebox}{Already fixed during rounds 1--3 (not open; listed for the record)}
+\begin{itemize}\setlength{\itemsep}{1pt}
+  \item \textbf{Rule fairness (round 1):} a pruning meant for the plan made the rule pick a farther bike 23\,\% of the time, and a ``battery dead zone'' left refused riders without a swap trip; both fixed.
+  \item \textbf{Targets-off control (round 2):} the ``targets off'' copy silently changed the rule's charging reserve; fixed, and the rule's written and relaxed rows are now identical on 60 of 60 E3u rows and 20 of 20 E8 runs.
+  \item \textbf{First siting launch (E9, superseded):} on an 8-bike family two searches reported ``no feasible layout'' (a wall-clock exhaustion was mapped to an infinite value; the access rule was enforced on single sites that can never cover all zones) and the budget sweep chose a one-spare swap-only site serving 7\,\% of orders (the cheap rule-based screen let only such sites through, with no served-share guard). Fixed in the relaunch (6-bike family, admissibility rule for swap-only sites, best-single-site start with a 50\,\% served-share guard, every evaluator failure reported as a status, access as repair-and-report); the archived numbers in \texttt{\_first\_attempt/} must not be quoted. Lesson: a cheap screening policy that values facilities differently from the plan can steer the search.
+  \item \textbf{Skipped cells (round 2 $\to$ 3):} 15 of 36 E3u and 22 E4u cells (power sweep, 12 battery $\times$ charger cells, one skipped cell) were unsolved for wall-clock reasons; all solved in round 3, round-2 numbers reproduced exactly. Smaller fixes (demand ramp, report plumbing) are listed in \texttt{notes/SUMMARY.md}.
+\end{itemize}
+\end{notebox}

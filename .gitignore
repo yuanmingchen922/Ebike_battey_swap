@@ -32,3 +32,25 @@ scratch/
 *_zh.md
 notes/workflow*.json
 notes/*_partial*.json
+
+# E9 bi-level siting: per-solve cache (tens of MB of schedules) and the superseded first attempt
+ebike_swap_sim/outputs/e9_bilevel/cache/
+ebike_swap_sim/outputs/e9_bilevel/_first_attempt/
+ebike_swap_sim/outputs/e9_bilevel/logs/
+
+# LaTeX residue and the abandoned academic draft (the brief is the deliverable)
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.fls
+paper/*.fdb_latexmk
+paper/overleaf_brief/
+paper/sec*_*.tex
+paper/appendix.tex
+paper/main.tex
+paper/refs.bib
+paper/brief.pdf
+paper/*.bak
+ebike_swap_sim/outputs/e9_bilevel_smoke/
+ebike_swap_sim/outputs/*_smoke/

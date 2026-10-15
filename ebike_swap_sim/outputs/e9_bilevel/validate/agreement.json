@@ -1,0 +1,101 @@
+{
+ "plan": {
+  "sub": "validate",
+  "family": "nyc4h_stress2",
+  "reposition": "all_candidates",
+  "min_served_share": 0.5,
+  "s_needs_charge": true,
+  "access_mode": "repair",
+  "n_bikes": 6,
+  "n_candidates": 4,
+  "candidates": [
+   "L01",
+   "L02",
+   "L03",
+   "L04"
+  ],
+  "seeds": [
+   0,
+   1
+  ],
+  "budgets_m": [
+   1.0
+  ],
+  "grid": [
+   [
+    "S",
+    1,
+    0
+   ],
+   [
+    "S",
+    2,
+    0
+   ],
+   [
+    "SC",
+    1,
+    1
+   ],
+   [
+    "SC",
+    2,
+    1
+   ]
+  ],
+  "roles": [
+   "S",
+   "SC"
+  ],
+  "size_bounds": {
+   "S": [
+    1,
+    2,
+    0,
+    0
+   ],
+   "SC": [
+    1,
+    2,
+    1,
+    1
+   ]
+  },
+  "max_hubs": null,
+  "layouts_m1": 8,
+  "worst_case_lower_level_solves": 16
+ },
+ "budgets": [
+  {
+   "budget_m": 1.0,
+   "budget": 52150.0,
+   "exhaustive_V": 676.2233333333334,
+   "exhaustive_layout": "L02:SC:B2:C1",
+   "coverage": {
+    "n_layouts": 8,
+    "solved": 6,
+    "pruned": 2,
+    "skipped_bound": 0,
+    "infeasible": 0,
+    "skipped_budget": 0,
+    "no_incumbent": 0,
+    "error": 0,
+    "full_coverage": true
+   },
+   "integrated_status": "TIME_LIMIT",
+   "integrated_obj": 676.2233333333337,
+   "integrated_bound": 668.0363332737527,
+   "integrated_gap": 0.01210694700406819,
+   "integrated_layout": "L02:SC:B2:C1",
+   "integrated_V_certified": 676.2233333333334,
+   "diff": 3.410605131648481e-13,
+   "tolerance": 13.192131510685783,
+   "exact": false,
+   "agree": true,
+   "integrated_le_exhaustive": true,
+   "exhaustive_within_bounds": true,
+   "same_layout": true,
+   "integrated_layout_V_by_evaluator": 676.2233333333334
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+id,label,source,lat,lon,node,grid_connected,n_restaurants,merged_labels,zone,rank
+L01,busiest cell 1,busiest,40.75125634643909,-73.9922327970978,"[13, 14]",True,92,['Penn Station (7th Ave / W 32nd)'],,1
+L02,busiest cell 2,busiest,40.74745383537406,-73.98687039637127,"[17, 13]",False,72,[],,2
+L03,busiest cell 3,busiest,40.75454534651303,-73.98169449295227,"[17, 19]",False,55,[],,3
+L04,busiest cell 4,busiest,40.75494373915295,-73.97530040334033,"[20, 21]",False,45,[],,4
+L05,busiest cell 5,busiest,40.759273020605676,-73.97824389067293,"[17, 23]",False,42,[],,5
+L06,busiest cell 6,busiest,40.767276435375656,-73.98257460251406,"[12, 27]",False,41,[],,6
+L07,8th Ave / W 34th St,landmark,40.7527,-73.9937,"[12, 15]",True,18,[],,7
+L08,Union Square,landmark,40.7359,-73.9911,"[19, 4]",True,2,[],,8
+L09,Grand Central Terminal,landmark,40.7527,-73.9772,"[20, 19]",True,20,[],,9
+L10,zone centre MN0603,zone,40.744704865084415,-73.97667016885688,"[23, 14]",False,9,[],MN0603,11
+L11,zone centre MN0402,zone,40.76333228716626,-73.9915566438355,"[9, 22]",False,2,[],MN0402,12
+L12,zone centre MN0401,zone,40.74967603527601,-73.99948953727957,"[10, 11]",False,0,[],MN0401,13

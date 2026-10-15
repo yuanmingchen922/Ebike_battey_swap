@@ -76,6 +76,7 @@ from ebike_swap_sim import (  # noqa: E402
 )
 from ebike_swap_sim import generator as gen  # noqa: E402
 from ebike_swap_sim import baseline as bl  # noqa: E402
+from ebike_swap_sim import sites_nyc as _sites_nyc  # noqa: E402
 
 OUTPUT_ROOT = os.path.join(_ROOT, "outputs")
 #: Gurobi threads (round-2 rule: at most 3; round-1 outputs were produced with 4).
@@ -123,12 +124,25 @@ FAMILIES: Dict[str, Dict[str, Any]] = {
     # built by ``ebike_swap_sim.data_nyc.make_nyc_instance`` (``builder`` key)
     "nyc4h": {"builder": "nyc", "n_bikes": 6, "window_h": 4.0, "orders_per_bike_hour": 1.5,
               "L": 12, "n_sites": 3, "cost_variant": "usd_sunk"},
+    # energy-stressed semi-real family for the bi-level siting study
+    # (notes/bilevel_siting_design.md section 5; E2_formulation_review proposal SC-1): 8 bikes /
+    # 48 orders / H 48, q0 ~ U{2..4} of 12 (100-200 Wh), one spare and one 1.4 kW charger per
+    # site (Cbar 4), a flat 4 kW grid group -- the regime in which location, role and size of
+    # the facilities matter (on nyc4h the battery side never binds: siting delta <= 0.41 USD).
+    # (the keyword arguments are ``ebike_swap_sim.sites_nyc.STRESS_PARAMS``: 8 bikes, 4 h, 1.5
+    # orders per bike-hour, L 12, usd_sunk, init_frac (2/12, 4/12), B 1 / C 1 / P 1.4 kW / Cbar 4,
+    # flat 4 kW grid group)
+    "nyc4h_stress": {"builder": "nyc", **_sites_nyc.STRESS_PARAMS},
+    # 'stressed but sane' family of the E9 relaunch (DECISIONS "E9 relaunch decisions"): 6 bikes /
+    # 36 orders / H 48, q0 ~ U{3..6} of 12, B 1 / C 1 / P 2.8 kW / Cbar 4, flat 4 kW grid group
+    # (``ebike_swap_sim.sites_nyc.STRESS2_PARAMS``)
+    "nyc4h_stress2": {"builder": "nyc", **_sites_nyc.STRESS2_PARAMS},
 }
 
 #: Families generated in round-2 mode of :func:`ebike_swap_sim.generator.make_synthetic_instance`
 #: (``window_h`` / ``orders_per_bike_hour`` knobs instead of ``n_orders`` / ``H``) or by
 #: :func:`ebike_swap_sim.data_nyc.make_nyc_instance`.
-R2_FAMILIES = ("usd4h", "usd4h_large", "usd8h", "usd4h_toyunits", "nyc4h")
+R2_FAMILIES = ("usd4h", "usd4h_large", "usd8h", "usd4h_toyunits", "nyc4h", "nyc4h_stress", "nyc4h_stress2")
 
 #: Arc-builder pruning recommended by the plan (``generator.default_pruning``).
 PRUNING_DEFAULTS: Dict[str, Any] = {"tau_max": 4, "start_slack": 6, "reachable": False}

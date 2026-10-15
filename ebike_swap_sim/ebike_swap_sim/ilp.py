@@ -158,7 +158,21 @@ class ILPModel:
                  colocated: bool, fixed_facilities: bool, budget: Optional[float],
                  zeta: Optional[float], lexicographic: bool, battery_swap_v1_bounds: bool,
                  threads: int, time_limit: float, output: bool,
-                 params: Optional[Dict[str, Any]] = None, names: Optional[bool] = None) -> None:
+                 params: Optional[Dict[str, Any]] = None, names: Optional[bool] = None,
+                 model: Optional[gp.Model] = None, prefix: str = "",
+                 facility_vars: Optional[Tuple[Dict[Any, gp.Var], Dict[Any, gp.Var], Dict[Any, gp.Var]]] = None,
+                 set_objective: bool = True) -> None:
+        """With the defaults the model owns its ``gp.Env`` / ``gp.Model`` and behaves as
+        documented above.  The three optional *shared-model* arguments (bi-level siting,
+        ``ebike_swap_sim.bilevel.integrated_stochastic_ilp``) make the instance a
+        **sub-model** of a caller-owned ``model``: its variables and rows (5)-(6),
+        (9)-(22) are added to that model under ``prefix`` (names), the facility variables
+        ``y, B, C`` are taken from ``facility_vars`` (``{facility_id: Var}`` maps, shared
+        across scenario copies) instead of being created, the facility bounds (7)-(8)
+        and the rows (33) are left to the caller (they are on the shared variables only),
+        and with ``set_objective=False`` the objective (26) is computed in
+        ``self.objective`` / ``self.components`` but not set on the model.  Gurobi
+        parameters are not touched on a shared model."""
         t0 = time.perf_counter()
         if lib.inst is not inst and lib.inst != inst:
             raise ValueError("the arc library was built on a different instance")
@@ -179,12 +193,20 @@ class ILPModel:
             "threads": threads, "time_limit": time_limit,
         }
         self._names = (len(lib) <= 300_000) if names is None else bool(names)
-        # an explicit environment lets OutputFlag be set BEFORE the licence banner
-        self.env = gp.Env(empty=True)
-        self.env.setParam("OutputFlag", 1 if output else 0)
-        self.env.start()
-        self.model = gp.Model("E2", env=self.env)
-        self._set_params(threads, time_limit, output, params or {})
+        self._prefix = str(prefix)
+        self._shared_facilities = facility_vars
+        self._set_objective = bool(set_objective)
+        self.shared_model = model is not None
+        if model is None:
+            # an explicit environment lets OutputFlag be set BEFORE the licence banner
+            self.env = gp.Env(empty=True)
+            self.env.setParam("OutputFlag", 1 if output else 0)
+            self.env.start()
+            self.model = gp.Model("E2", env=self.env)
+            self._set_params(threads, time_limit, output, params or {})
+        else:
+            self.env = None
+            self.model = model
         self.components: Dict[str, gp.LinExpr] = {}
         self.objective: gp.LinExpr = gp.LinExpr()
         self.sum_u: gp.LinExpr = gp.LinExpr()
@@ -209,6 +231,7 @@ class ILPModel:
     def _nm(self, base: str, *idx: Any) -> str:
         if not self._names:
             return ""
+        base = self._prefix + base
         return base + "[" + ",".join(str(i) for i in idx) + "]" if idx else base
 
     # -------------------------------------------------------------- build
@@ -266,8 +289,16 @@ class ILPModel:
         self.y: Dict[Any, gp.Var] = {}
         self.B: Dict[Any, gp.Var] = {}
         self.C: Dict[Any, gp.Var] = {}
+        shared = self._shared_facilities
+        if shared is not None:
+            for f in inst.facilities:
+                if f.id not in shared[0] or f.id not in shared[1] or f.id not in shared[2]:
+                    raise ValueError(f"shared facility variables lack facility {f.id!r}")
+                self.y[f.id], self.B[f.id], self.C[f.id] = shared[0][f.id], shared[1][f.id], shared[2][f.id]
         for f in inst.facilities:
             j = f.id
+            if shared is not None:
+                continue
             if fixed and f.y is not None:
                 self.y[j] = m.addVar(lb=f.y, ub=f.y, vtype=GRB.BINARY, name=self._nm("y", j))
             else:
@@ -352,7 +383,8 @@ class ILPModel:
             add("(6)", gp.quicksum(x[a] for a in ids) + u[o.id], GRB.EQUAL, 1, f"order[{o.id}]")
 
         # ------------------------------------------------------- (7)-(8) facilities
-        for f in inst.facilities:
+        # (on a shared model the caller owns y/B/C and adds (7)-(8) and (33) once)
+        for f in (inst.facilities if shared is None else []):
             j = f.id
             add("(7)-(8)", B[j] - f.K * y[j], GRB.LESS_EQUAL, 0, f"B_le_Ky[{j}]")
             add("(7)-(8)", C[j] - min(f.Cbar, f.K) * y[j], GRB.LESS_EQUAL, 0, f"C_le_Cbary[{j}]")
@@ -448,7 +480,7 @@ class ILPModel:
                         f"swap_pos[{j},{tau}]")
 
         # ------------------------------------------------------------- (33)
-        if sw["budget"] is not None:
+        if sw["budget"] is not None and shared is None:
             inv = gp.quicksum(f.Fhat * y[f.id] + f.bhat * B[f.id] + f.chat * C[f.id]
                               for f in inst.facilities)
             add("(33)", inv, GRB.LESS_EQUAL, float(sw["budget"]), "budget")
@@ -470,7 +502,8 @@ class ILPModel:
                          + gp.quicksum(inst.service(e).vreb_q(q) * z[e, q] for (e, q) in z_keys))  # (32)
         comp["C_dummy_terminal"] = gp.LinExpr(dummy_coef, [x[a] for a in dummy_ids])
         self.objective = gp.quicksum(comp.values())                                   # (26)
-        m.setObjective(self.objective, GRB.MINIMIZE)
+        if self._set_objective:
+            m.setObjective(self.objective, GRB.MINIMIZE)
 
     # ---------------------------------------------------------- MIP start
     def _translate_schedule(self, sched: Schedule) -> Schedule:

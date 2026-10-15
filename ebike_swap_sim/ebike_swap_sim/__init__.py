@@ -51,7 +51,7 @@ from .evaluate import (
     transfer_counts,
 )
 
-_LAZY_MODULES = {"ilp", "baseline", "generator", "costs", "data_nyc", "acs_weights"}
+_LAZY_MODULES = {"ilp", "baseline", "generator", "costs", "data_nyc", "acs_weights", "sites_nyc", "bilevel"}
 
 __all__ = [
     "SimConfig", "GridNetwork", "RoadNetwork", "GridRoute",

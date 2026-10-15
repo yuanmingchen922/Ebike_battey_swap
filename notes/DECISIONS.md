@@ -126,3 +126,76 @@ The E2 mathematics is unchanged. Only the service-level variant, the solver prot
 - Seeds: E2u 0-9, E3u 0-4, E4u 0-5 (default size, B sweep, free-size run; P sweep and off-line B x C cells filled on seeds 0-2 / 0), E8 0-9.
 - Gurobi: OutputFlag 0, Threads 3, TimeLimit 300 s (600 s as above), `Seed = 0` (`common.ILP_PARAMS_R3`); each script has a wall budget (E2u 5 h, E3u 4 h, E4u 4 h, E8 2 h) and records what it could not start as `SKIPPED_BUDGET`; records are appended to `outputs/<exp>_round3/records.jsonl` and `results.csv` is refreshed after every run; `--dry-run` / `--smoke` / `--analyse` modes, covered by `tests/test_round3.py`.
 - Baseline rows are recomputed in round 3 where cheap (E3u, E4u: milliseconds, same code path as round 2, totals asserted against the stored written rows); E2u / E8 reuse the stored policy rows.
+
+
+---
+
+# E9 relaunch decisions (2026-10-14) — after the first bi-level launch produced degenerate results
+
+The E2 mathematics is unchanged. Only the siting family, the search heuristic's rules and the
+reposition-target convention of the lower-level libraries change. First-attempt outputs are kept in
+`outputs/e9_bilevel/_first_attempt/` (its `README.md` lists the four failures with evidence).
+
+## E9R.1 Root causes found in the first attempt (code references are to the pre-fix files)
+- `roles/` S_SC and S_C_SC "no feasible layout": the 4500 s wall budget was exhausted after the SC_only search
+  (wall_min 103.9 at its chosen rows); every later lower-level price returned `SKIPPED_BUDGET`
+  (`bilevel.py` `evaluate_scenario` 517-523, not cached, no record), `evaluate` set `V = None` (605-607),
+  `value()` mapped `None` to `+inf` (638-641), the greedy's `price` (922-923) therefore saw every move as
+  infeasible, stopped (956-958) and reported "no feasible layout" (973-975). Same mechanism in
+  `access/no_access` step 2 and in the SC_only second step.
+- `access/` D8 and D12 "no feasible layout": `ok()` (919-920) required `layout_covers` on every intermediate
+  layout, including the singletons of the first step; no single candidate covers all 12 zones (MN0202/MN0203 need
+  L08, MN0601 needs L10), so `adds` was empty at the first step (942-945) and the search never started.
+- `access/no_access` and `sweep/` chose L03:S:B1:C0 (served share 0.069): the baseline screen (`_screen`
+  888-892, called at 946 with `k_screen 5`) ranks ALL moves of the step together; the baseline policy values
+  one-spare swap-only sites at 1462-1480 and co-located sites at 1631+ (it serves orders at a loss where the
+  ILP drops them), so only S:B1:C0 singletons were priced and the best of them (ILP 1398) started the search;
+  at the first step the gain was `-V` (951, `v_lam = inf`), so the ratio was not the culprit, the screen was;
+  no served-share guard existed.
+- Lower-level solves of 2.2-2.4 M arcs (8 bikes, reposition targets = all 12 candidates + depots) hit 300 s.
+
+## E9R.2 Family `nyc4h_stress2` (default of `experiments/e9_bilevel_siting.py`; `nyc4h_stress` selectable)
+- 6 bikes / 36 orders / H 48, `q0 ~ U{3..6}` of 12, one spare / one charger / `Cbar 4` per default site, flat
+  4 kW grid group, `P_j = 2.8 kW` per site (so a hub can run its 4 chargers, `4 x 0.667 kW`; with 1.4 kW the
+  `C = 4` option would be dominated; the 4 kW group still caps the network at 6 simultaneous charges).
+- Size menu (`sites_nyc.SIZE_MENUS['nyc4h_stress2']`): `S: B in {1, 2, 3}`, `SC: B in {1, 2, 3} x C in {1, 2}`,
+  hubs `C in {2, 4}`. Budget unit unchanged (52,150 USD = Fhat + 3 bhat + 2 chat).
+- Rule "swap-only sites only next to a charge-capable object": an S object holds at most 3 full batteries and
+  cannot recharge; without a C / SC object nothing is ever resupplied, so an S-only layout is a dead stock, not a
+  design. Implemented as `sites_nyc.layout_admissible(s_needs_charge=True)` in the greedy, the enumeration and
+  as the rows `y_(l,S) <= sum_l' (y_(l',C) + y_(l',SC))` of the integrated model; `--allow-s-only` lifts it.
+- Sanity check (seeds 0-2, baseline policy): a single L03:SC:B3:C2 serves 0.86 / 0.75 / 0.86 of the orders
+  (>= 0.70 required), L03:SC:B2:C1 0.69 / 0.67 / 0.75; lower-level ILP of L03:SC:B3:C2 on seeds 0, 1: OPTIMAL
+  in 37 s / 17 s, served 0.85, V 664.3 (`tests/test_bilevel.py::test_stress2_family_is_stressed_but_sane`).
+
+## E9R.3 Greedy + local search (algorithm C) rules
+- Start = the best singleton by lower-level V (never by gain per dollar, never decided by the baseline screen):
+  the baseline screen keeps the `k_screen` best singletons PER ROLE, all of them are priced by the ILP, the
+  cheapest usable one starts; if none is usable, every remaining admissible singleton is priced (exhaustive
+  singletons). "no feasible layout" is reported only when no singleton is feasible with enough service, with
+  the status counts of everything priced (`reasons`).
+- A move is usable only when its lower level is feasible on every scenario AND its expected served share is at
+  least `--min-served` (0.5); feasible moves below that are recorded `LOW_SERVICE` and discarded. The gain per
+  investment dollar ranks only the additions after the start.
+- `SKIPPED_BUDGET` (wall budget) stops the search and is reported as status `wall budget exhausted` with
+  `search_complete = False`; it is never treated as infeasibility. Exceptions inside a lower-level evaluation
+  become `ERROR` rows with the message (recorded in `records.jsonl`, not cached) and count as non-usable moves.
+- Access row [U4]: `--access-mode repair` (default) never restricts the search; after the local search of a
+  budget level the greedy adds / flips swap-capable items that cover the most still-coverable uncovered zones
+  (usable moves only, within the budget) and repeats the local search without losing coverage; the zones still
+  uncovered are REPORTED (`uncovered_zones`), not enforced. `report` only reports; `enforce` is the first-attempt
+  behaviour (kept for reference). The integrated model keeps [U4] as hard rows (the exact benchmark of the
+  requirement where it is affordable).
+
+## E9R.4 Reposition targets (lower-level libraries)
+- `sites_nyc.siting_pruning(inst, targets=...)`: `all_candidates` (moves into every candidate node + depots; one
+  template per scenario, every layout a sub-library) or `open_sites` (open facility nodes + depots, the E8
+  `targets = 'facilities'` convention). `LowerLevelEvaluator(reposition=...)` records the mode in the cache key.
+- `--validate` (E9.1) keeps `all_candidates`: the integrated model (A) and the exhaustive enumeration (B) share the
+  same per-layout libraries (sub-libraries of the all-candidates template), so their optimal values are
+  comparable exactly. The search sub-commands (`--sweep --roles --deck --cross --access`) use `open_sites`
+  (0.5-0.7 M arcs at 6 bikes, built in ~1 s per layout instead of 11 s subset extractions from a 3.2 M template);
+  an `open_sites` value is an upper bound on the `all_candidates` value of the same layout (fewer move arcs), and
+  both remain upper bounds on the written optimum (E8 convention). The superset bound and the integrated model
+  always use the all-candidates template; integrated schedules are certified on the template sub-library.
+- Cache version bumped to `e9-2` (first-attempt cache moved to `_first_attempt/cache/`).

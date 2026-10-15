@@ -523,3 +523,167 @@ B sweep (C_j = 2, P_j = 4 kW; n = 6; marginal = paired value of one more battery
 | code | `ebike_swap_sim/` (README.md, CONTRACT.md) |
 
 The script-written `RESULTS.md` in each round-3 directory is intermediate (E3u: an English stub after the `--analyse` crash; E8: abstract rewritten in English); `RESULTS_final.md` is the deliverable in each.
+
+---
+
+# Round 4 (2026-10-14): bi-level station siting (E9)
+
+Round 4 again **did not change any of E2's mathematics** (`ilp.py`, `arcs.py`, `evaluate.py` unchanged apart from the `model / prefix / facility_vars / set_objective` hooks of `ILPModel` that let several E2 sub-models share one Gurobi model; toy 12.5 / 11.2 / 106 still reproduced). It adds an upper level on top of E2: a planner that chooses station locations, roles and sizes, with the E2 operations ILP as the lower level. Design: `notes/bilevel_siting_design.md` (plus the relaunch addendum); binding conventions: `notes/DECISIONS.md`, "E9 relaunch decisions" (E9R.1-E9R.4). Code: `ebike_swap_sim/sites_nyc.py`, `ebike_swap_sim/bilevel.py`, `experiments/e9_bilevel_siting.py`, `tests/test_bilevel.py` (22 tests; 158 in the suite). Consolidated report: `ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md`; authoritative numbers in the six sub-reports `outputs/e9_bilevel/{validate,sweep,roles,deck,access,cross}/RESULTS_final.md`. The first launch (`outputs/e9_bilevel/_first_attempt/`) is superseded; section 3 records what went wrong.
+
+## 1. What was done
+
+### 1.1 The question and the bi-level model
+
+The proposal asks where in Midtown swap / charge stations should go, which kind, and how big, for a fleet whose daily operations are run by the E2 coordinator. Upper level (planner): among 12 candidate locations (`sites_nyc.candidate_sites()`: the six busiest restaurant cells L01-L06, three grid-connected landmarks L07-L09, three NTA zone centres L10-L12; `outputs/e9_bilevel/candidates.csv`), choose which to open, with which role (S swap-only, C charge-only hub, SC co-located) and size (B spares, C chargers), under the investment budget (33a) of m x 52,150 USD (one unit = Fhat 50,000 + 3 bhat 450 + 2 chat 400). Lower level (coordinator): the written E2 ILP with the facilities fixed, one solve per demand scenario (seed of the instance generator). Planner value `V = sum_j (F_j y_j + bB B_j + bC C_j) + sum_s p_s OPEX_s`, i.e. window-allocated setup plus expected operating cost. Because both levels minimise the same cost the problem is optimistic bi-level and collapses to one two-stage stochastic ILP (the exact benchmark); it is genuinely bi-level when the planner adds rows the operator does not price (the access row [U4]) or evaluates layouts under another operating policy (algorithm E).
+
+### 1.2 Family `nyc4h_stress2` (E9R.2)
+
+6 bikes / 36 orders / H 48 (4 h), `q0 ~ U{3..6}` of 12 levels (25-50 %), one spare / one charger / `Cbar 4` per default site, `P_j = 2.8 kW` per site, flat 4 kW grid group, `usd_sunk` prices, bikes start at the three busiest cells, demand byte-identical across layouts of a scenario. Size menu: S `B in {1, 2, 3}`, SC `B in {1, 2, 3} x C in {1, 2}`, hubs `C in {2, 4}`. Admissibility rule: a swap-only site only next to a charge-capable object (otherwise it is dead stock). Sanity bar: one SC:B3:C2 site serves >= 0.70 under the baseline policy (0.75-0.86 on seeds 0-2) and 0.85 under the ILP.
+
+### 1.3 Algorithms and sub-experiments
+
+(A) integrated stochastic ILP (shared `y, B, C`, one E2 sub-model per scenario); (B) exhaustive enumeration with a superset bound and scenario-by-scenario pruning; (C) greedy + local search: start = best singleton by lower-level V (per-role baseline screen keeping the top-5 moves per role, all priced by the ILP; exhaustive singletons as fallback), additions ranked by gain per investment dollar, local search with swap / size +-1 / role-flip moves (3 passes), a 50 % served-share guard, wall exhaustion reported as a status; (D) the proposal deck's spin-and-adjust heuristic (open the k = m sites with the most baseline swaps, size by swap demand, 3 iterations, no ILP during the search); (E) cross-evaluation of every chosen layout under the ILP, the baseline policy and the relaxed-target ILP on 5 seeds (0-2 in-sample, 3-4 out-of-sample). Access row [U4] (every NTA demand zone within D blocks of an open swap-capable site, D = 8 / 12 blocks = 1.2 / 1.8 km) in repair-and-report mode. Reposition targets: `all_candidates` libraries in the validation (so that (A) and (B) price the same arcs), per-layout `open_sites` libraries (E8 convention) in the search runs; every ILP value is therefore an upper bound on the written E2 optimum.
+
+| sub-experiment | what | size | solver coverage | wall |
+|---|---|---|---|---|
+| E9.1 `validate/` | (B) vs (A) | 4 candidates L01-L04, 2 seeds, m = 1, menu B <= 2 | 8 layouts (6 solved, 2 pruned), 14 lower-level solves: 9 OPTIMAL, 5 TIME_LIMIT at 0.8-1.6 % gap; integrated 1.50 M variables, 600 s | 44.7 min |
+| E9.2 `sweep/` | (C) per budget, Pareto curve, (A) as bound | 12 candidates, 3 seeds, m = 1..4, full menu | 29 layouts, 87 solves all OPTIMAL; 4 integrated runs at TIME_LIMIT (5.35 M variables, no usable bound) | 133 min |
+| E9.3 `roles/` | role sets {SC}, {S, SC}, {S, C, SC} | 12 candidates, 3 seeds, m = 2, 3 | 28 layouts, 84 solves all OPTIMAL | 87 min |
+| E9.4 `deck/` | (D) vs (C) | 12 candidates, 3 seeds, m = 1..4 | 10 baseline iterations, 12 ILP solves all OPTIMAL | 9.5 min |
+| E9.5 `cross/` | (E) on 7 chosen layouts | 5 seeds | 105 evaluations; 66 of 70 ILP evaluations OPTIMAL, 4 TIME_LIMIT on L02:SC:B2:C1 | 56 min |
+| E9.6 `access/` | [U4] at D = 8 / 12 | 12 candidates, 3 seeds, m = 2, 3 | 112 new solves (111 OPTIMAL); D = 8, m = 3 truncated by the 120 min wall | 140 min |
+
+Gurobi 13, Threads 3, Seed 0, TimeLimit 300 s per lower-level solve (600 s with hubs), 600 s for the integrated model; shared lower-level cache (`outputs/e9_bilevel/cache/`, version `e9-2`, 2,329 schedule files); about 7.9 h in total, three processes in parallel. Baseline-policy screening runs take milliseconds (1,449 in the sweep, 1,446 in roles, 2,088 in access).
+
+## 2. Results
+
+Layout keys read `location:role:B<spares>:C<chargers>`; V in USD per 4 h window = allocated setup + expected opex over the scenarios.
+
+### 2.1 E9.1 validation (`validate/RESULTS_final.md`)
+
+| method | layout | V | note |
+|---|---|---|---|
+| exhaustive enumeration (B) | L02:SC:B2:C1 | 676.223 | 8 admissible single-site layouts, 6 solved on both seeds, 2 pruned by the superset bound |
+| integrated stochastic ILP (A) | L02:SC:B2:C1 | 676.223 | agreement to 3e-13; bound 668.04 after 600 s (gap 1.21 %, one node, no improvement on the MIP start) |
+| per-layout Gurobi bounds | - | optimum in [671.13, 676.22] | one-spare vs two-spare separation (>= 48 USD, served 0.68 vs 0.79-0.82) certified; ranking among L01 / L02 / L03 at two spares (676.2 / 679.6 / 680.9) inside the solver gaps |
+
+E9.1 validates the machinery, not the number: on the full menu and five seeds L02:SC:B2:C1 is the worst of the seven chosen layouts (section 2.6).
+
+### 2.2 E9.2 budget sweep (`sweep/RESULTS_final.md`; figures `map_sites_final.png`, `pareto_final.png`, `greedy_trajectory_final.png`)
+
+| m | budget USD | layout | investment used | unspent | V | setup / opex | served share |
+|---|---|---|---|---|---|---|---|
+| 1 | 52,150 | L02:SC:B3:C2 | 52,150 (100 %) | 0 | 654.377 | 13.19 / 641.19 | 0.852 |
+| 2 | 104,300 | L02:SC:B4:C2 | 52,600 (50 %) | 51,700 | 654.525 | 13.52 / 641.00 | 0.852 |
+| 3 | 156,450 | L02:SC:B4:C2 | 52,600 (34 %) | 103,850 | 654.525 | 13.52 / 641.00 | 0.852 |
+| 4 | 208,600 | L02:SC:B4:C2 | 52,600 (25 %) | 156,000 | 654.525 | 13.52 / 641.00 | 0.852 |
+
+- L02 = busiest restaurant cell 2 (72 restaurants, W 29th-30th / 6th Ave, NoMad). Operating detail of the chosen layout: 30.67 of 36 orders served, 1.67 late (6 USD), unserved penalty 160 USD (5.33 x 30), response 462.5 USD, travel 11.9 USD, electricity 0.56-0.75 USD (1.7-2.4 kWh), no transfers; the site is out of full batteries 12-41 of 48 slots per scenario, yet the coordinator times its six swaps (one per bike) around the charging cycle.
+- Why a second site never pays: 15-16 second-site additions to the best singleton L01:SC:B3:C2 (655.06) and 5 more next to L02:SC:B4:C2 all raised V, by +11.85 to +12.21 USD (S / SC) and +29.35 USD (hubs C = 2 at L02-L06); allocated setup of a second site 12.0-13.2 USD (S / SC) or 29.19 + 0.16 USD (hub); best operating saving of any second site 1.09 USD (0.17 %, L01:SC:B3:C2 + L10:SC:B3:C2, opex 640.78). Unserved (160 USD) and response (462.5 USD) are identical for every layout with B >= 3.
+- Pareto curve of investment vs expected opex: one point plus the 450 USD fourth spare; doubling the investment from 52 k to 104 k USD buys at most 1.09 USD per window. A third charger or a fifth spare at L02 is idle (opex unchanged, setup +0.08 / +0.33 USD).
+- Integrated model: 5.35 M variables (4.96 M binaries, 465 k rows), accepted the greedy's layout as incumbent at all four budgets, no usable bound in 600 s (`-inf` at m = 1 because the root LP did not finish, -12,549 at m = 2..4). The auto-generated `pareto.png` draws that meaningless bound; `pareto_final.png` omits it.
+
+### 2.3 E9.3 role sets (`roles/RESULTS_final.md`; figures `roles_priced_moves.png`, `roles_components.png`, `roles_map.png`)
+
+| role set | m = 2 | m = 3 | V | served | transfers used |
+|---|---|---|---|---|---|
+| {SC} | L02:SC:B4:C2 | L02:SC:B4:C2 | 654.525 | 0.852 | 0 |
+| {S, SC} | L02:SC:B4:C2 | L02:SC:B4:C2 | 654.525 | 0.852 | 0 |
+| {S, C, SC} | L02:SC:B4:C2 | L02:SC:B4:C2 | 654.525 | 0.852 | 0 |
+
+Forcing co-location costs 0.00 USD, allowing hubs gains 0.00 USD. Hubs were priced five times and gave byte-identical opex to the parent (`transfers_used = 0` in all 84 solves although 14-16 shuttle services existed): a hub costs exactly its setup (+29.4 USD). Swap-only additions cost +12.4-13.0 USD and contribute only their 1-3 initial spares (worth 0.18-1.02 USD). The E3u finding "hub = +F_hub, transfers worth 0-9 USD" reappears in its extreme form (transfers worth exactly 0). The hub cost sensitivity (F_hub 12.03 instead of 29.19) was not run and is not needed: a hub with unchanged opex enters only at negative setup.
+
+### 2.4 E9.4 deck heuristic regret (`deck/RESULTS_final.md`; figures `deck_vs_bilevel_final.png`, `map_deck_vs_bilevel.png`, `deck_demand_proxy.png`)
+
+| m | deck layout | deck V | bi-level V | regret USD | regret % | extra setup of the deck |
+|---|---|---|---|---|---|---|
+| 1 | L01:SC:B3:C2 | 655.06 | 654.38 | 0.68 | 0.10 | 0.00 |
+| 2 | L01:SC:B3:C1 + L02:SC:B4:C1 | 667.08 | 654.53 | 12.56 | 1.92 | 13.03 |
+| 3 | L01:SC:B4:C1 + L02:SC:B4:C1 + L04:SC:B3:C1 | 680.06 | 654.53 | 25.53 | 3.90 | 26.47 |
+| 4 | L01:SC:B4:C1 + L02:SC:B5:C1 + L04:SC:B3:C1 + L06:SC:B3:C1 | 693.31 | 654.53 | 38.78 | 5.93 | 39.91 |
+
+At m = 1 the two planners agree on role and size and differ only between two adjacent cells (L01 vs L02, a tie on the demand proxy of 1.67 swaps each). From m = 2 the regret is the setup of the extra sites minus 0.5-1.1 USD of operating saving; served share, lateness and unserved penalty identical. Priced by the baseline policy the same deck layouts cost 1025-1072 USD (34-39 % more than under the ILP) and the policy ranks the two-site layout best, so a planner evaluating designs with the myopic policy over-builds.
+
+### 2.5 E9.6 access row [U4] (`access/RESULTS_final.md`; figures `access_map.png`, `access_coverage.png`, `access.png`, `access_search.png`)
+
+| m | variant | layout | investment | V | delta V | served | zones covered of 11 | mean / max blocks to site |
+|---|---|---|---|---|---|---|---|---|
+| 2, 3 | no access | L02:SC:B4:C2 | 52,600 | 654.525 | - | 0.852 | 5 (D 8) / 8 (D 12) | 11.65 / 22 |
+| 2 | D = 8 | L02:SC:B4:C1 + L05:SC:B1:C1 | 103,050 | 666.605 | +12.08 (+1.85 %) | 0.852 | 8 | 8.52 / 15 |
+| 3 | D = 8 (truncated) | L02:SC:B4:C2 + L05:SC:B1:C1 + L08:S:B1:C0 | 153,900 | 678.906 | +24.38 (+3.73 %) | 0.852 | 9 | 7.41 / 15 |
+| 2, 3 | D = 12 | L02:SC:B4:C1 + L05:SC:B1:C1 | 103,050 | 666.605 | +12.08 (+1.85 %) | 0.852 | 11 | 8.52 / 15 |
+
+The cost of access is the allocated fixed cost of each extra site (12.36-12.44 USD), of which 0.28-0.43 USD comes back as shorter rider detours; the served share does not move. At D = 12 (1.8 km) two sites cover all 11 zones and the third budget unit stays unspent. At D = 8 (1.2 km) zone MN0801 is beyond 8 blocks of every candidate (full coverage infeasible for every layout), MN0202 and MN0701 each have a single candidate in reach (L08, L06), and the m = 3 search was cut by the 120 min wall inside the second repair round with MN0701 still uncovered (the L06 option and the covering polish were never priced). Candidates that enter only because of the access row: L05 (Rockefeller south, always) and L08 (Union Square, D = 8, m = 3); no zone-centre candidate (L10-L12) is ever chosen.
+
+### 2.6 E9.5 cross-evaluation (`cross/RESULTS_final.md`; figure `cross_eval_final.png`)
+
+| layout | chosen by | V ILP | V baseline | regret ILP | regret baseline | ILP vs policy gap |
+|---|---|---|---|---|---|---|
+| L02:SC:B3:C2 | greedy + LS m = 1 | 654.49 | 1026.24 | 0.00 | 47.37 | 36.2 % |
+| L01:SC:B3:C2 | deck m = 1 | 654.65 | 1022.26 | 0.16 | 43.39 | 36.0 % |
+| L02:SC:B4:C2 | greedy + LS m = 2, 3; all role sets | 654.64 | 978.87 | 0.15 | 0.00 | 33.1 % |
+| L01 + L02 (deck m = 2) | deck | 666.91 | 991.36 | 12.42 | 12.49 | 32.7 % |
+| L01 + L02 + L04 (deck m = 3) | deck | 679.85 | 986.31 | 25.36 | 7.44 | 31.1 % |
+| L01 + L02 + L04 + L06 (deck m = 4) | deck | 693.10 | 1006.16 | 38.61 | 27.29 | 31.1 % |
+| L02:SC:B2:C1 | validate (restricted menu) | 662.79 | 1129.47 | 8.30 | 150.61 | 41.3 % |
+
+- Location robust: every method and both policies put the single site at L02, with L01 a tie (+0.16 USD for the ILP, 4 USD better for the policy); among eight single sites priced as SC:B3:C2 the spread is 4.2 USD (0.6 %): L02 654.4, L01 655.1, L05 655.2, L07 655.7, L08 657.0, L11 658.5.
+- Size not robust: the coordinator is indifferent between 3 and 4 spares (0.15 USD) while the policy values the fourth spare at 47.4 USD per window (4.8 %) because it runs the site dry; both agree two spares are too few (+8.3 / +150.6 USD). Cross-regret asymmetric: the policy's best layout costs the coordinator 0.15 USD, the coordinator's best costs the policy 47.4 USD.
+- The ILP beats the baseline policy by 31.1-41.3 % of the policy's cost on every layout (306-467 USD per shift), 53-60 % of it lateness (15-18 late orders vs 1.4-1.8). In-sample (seeds 0-2) vs out-of-sample (seeds 3-4) ILP opex differs by -0.3 to +4.2 USD (no over-fit); the baseline swings by 74-128 USD between the subsets. Relaxed end-of-horizon targets are worth 0.02-0.42 USD on layouts with B >= 3 and 1.38 USD at B = 2.
+
+### 2.7 Solver facts
+
+- Lower-level E2 ILP (6 bikes, 0.5-0.8 M arcs with `open_sites` targets): OPTIMAL in 11-150 s on the search runs (sweep mean 29 s, max 75 s; roles mean 28 s, max 66 s; cross 11-148 s, growing with the number of open sites; access mean 35 s, max 185 s). Two-spare layouts are the slow ones: all 5 TIME_LIMIT solves of the validation and all 4 of the cross run are on B = 2 layouts. The 8-bike first-attempt family needed 2.2-2.4 M arcs and routinely hit 300 s.
+- Integrated stochastic ILP: 1.50 M variables on the validation protocol (bound 668.04, gap 1.21 % in 600 s); 5.35 M variables at 12 candidates x 3 scenarios, where it returned only its warm start and no usable bound. At this size it is an incumbent checker, not a certifier.
+- Coverage: no ERROR, no infeasible layout, no LOW_SERVICE row in any sub-experiment. Search limits: no three-site layout was ever priced by the greedy (no two-site layout beat the singleton), hubs with C = 4 and hubs at L07-L12 were never priced, and only the top-5 moves per role by the baseline screen reach the ILP (the screen ranks sizes the wrong way round: it prefers more spares and put the eventual best singleton L02 6th).
+
+## 3. The first attempt and its lesson (superseded; `outputs/e9_bilevel/_first_attempt/README.md`, DECISIONS E9R.1)
+
+The first launch ran on the 8-bike family `nyc4h_stress` (8 bikes / 48 orders, `q0 ~ U{2..4}`). Four failures: (i) the roles run reported "no feasible layout" for {S, SC} and {S, C, SC} because the 4500 s wall budget was exhausted after the {SC} search and every later lower-level price returned `SKIPPED_BUDGET`, which the greedy mapped to an infinite value; (ii) the access run reported "no feasible layout" because [U4] was enforced on every intermediate layout, including the singletons of the first step, and no single candidate covers all zones; (iii) the sweep and the no-access control chose L03:S:B1:C0, a swap-only site with one spare serving 7 % of the orders, because the baseline-policy screen (which serves orders at a loss where the ILP drops them) valued one-spare swap-only sites at 1462-1480 against 1631+ for co-located sites, so only S:B1 singletons were priced, and no served-share guard existed; (iv) lower-level solves of 2.2-2.4 M arcs hit 300 s. Only `validate/` (6 bikes, 4 candidates) was sound and agreed (A) = (B). Fixes (E9R.2-E9R.4): the lighter family `nyc4h_stress2`; swap-only sites admissible only next to a charge-capable object; start = best singleton by lower-level V with a per-role screen and a 50 % served-share guard; wall exhaustion reported as `wall budget exhausted` with `search_complete = False`, never as infeasibility; exceptions as `ERROR` rows; the access row as repair-and-report; per-layout `open_sites` libraries. All covered by regressions in `tests/test_bilevel.py`. **Lesson:** a cheap screening policy that values facilities differently from the ILP can silently steer the search, and every failure mode of the evaluator must be surfaced as a status, never folded into the objective.
+
+## 4. Interpretation
+
+1. **One well-stocked co-located station is the whole infrastructure on this family.** Every method (enumeration, integrated ILP, greedy + local search, all three role sets) opens a single SC site at L02 with 3-4 spares and 2 chargers, V about 654 USD per window, 85.2 % served; budgets beyond one unit stay unspent (51,700 / 103,850 / 156,000 USD). A second site of any role costs 11.9-12.2 USD (S / SC) or 29.4 USD (hub) of allocated setup against at most 1.09 USD of operating saving.
+2. **The structural reason is that the fleet binds, not the batteries.** Under the ILP the served share is 0.852 (0.856 on five seeds), lateness 1.7-1.8 orders and the unserved penalty 160 USD for every layout with at least three spares, from one site to four; siting and sizing move only travel (11.8-12.4 USD) and electricity (0-0.8 USD). The family makes station siting bind for the myopic policy (47 USD for the fourth spare, 151 USD for the third) but still not for the coordinator, so the upper level carries little information beyond "one site, B >= 3".
+3. **Hubs and swap-only satellites are never used** because the coordinator never moves a battery between stations within a 4 h window (0 transfers in 84 of 84 solves), consistent with E3u (transfers worth 0 under relaxed targets, at most 22 USD under written ones). A hub is priced exactly at its rent.
+4. **The deck's one-station-per-budget-unit rule over-builds by its sunk cost** (regret 0.1 / 1.9 / 3.9 / 5.9 % at m = 1..4, almost exactly the setup of the extra sites), and a planner that prices layouts with the myopic policy over-builds further (the policy ranks the two-site layout best).
+5. **Location is policy-robust, size is not.** Both operators put the station at L02 (L01 a tie); the coordinator values the fourth spare at 0.15 USD, the policy at 47.4 USD. Stations should be sized for the operator that will actually run the fleet.
+6. **Spatial access is a planner's purchase, not a service lever**: every zone within 1.2-1.8 km of a swap point costs about 12 USD per window per extra site (L05, then L08), shortens rider detours (mean 11.6 -> 8.5 blocks) and leaves the served share unchanged.
+7. **Certification is partial.** Exact agreement (A) = (B) holds on the small validation protocol; at full size the integrated model gives no bound, so the m = 2..4 answers are heuristic incumbents justified by the exhaustive pricing of every single-site move and the flat Pareto frontier, not by a gap.
+
+## 5. Next steps (by value)
+
+1. A deeper energy-stressed family in which the second site changes who gets served: more bikes per site, lower q0, a longer window, or fewer spares per site (B = 2 is the only size at which the ILP reacts).
+2. More candidates across Manhattan: the Midtown box is 2 x 3.5 km, so every candidate is within one detour of every order.
+3. A rolling-horizon or multi-day lower level, where charging turnover and end-of-day stock give chargers and hubs a role.
+4. Policy-aware siting: the upper level evaluated under the policy that will run the fleet (algorithm E as the follower); and the integrated model with hard [U4] rows at D = 12, m = 2, warm-started from L02 + L05, as the exact access benchmark.
+5. Cheap fixes: seed budget m's local search with the results of all lower budgets (removes the 0.15 USD non-monotonicity); canonical keys so that `SC:B1:C0` and `S:B1:C0` are priced once (6 wasted solves); price L02 + L05 + L06 and L02 + L06 + L08 directly to settle the D = 8, m = 3 question in six solves; persist local-search histories (now reconstructed from the logs); extend the enumeration menu to B = 4.
+
+## 6. Decisions needed from the supervisor
+
+1. Is "one co-located station at L02 with 3-4 spares and 2 chargers; nothing else pays" an acceptable answer to the proposal's siting question for the paper, with the structural explanation (fleet binds) stated alongside, or should the siting experiment be re-run on a family where the station side binds for the coordinator (item 5.1) before anything is written up?
+2. Which operator should the station be sized for in the paper: the coordinator (3 spares, 654.38) or the rule-based policy (4 spares, 450 USD more, worth 47 USD per window to it)?
+3. Report the m = 2..4 results as heuristic incumbents without a certified gap (current state), or invest in a bound (a decomposition of the integrated model, or an enumeration of all two-site layouts, about 66 x 3 solves)?
+4. Access requirement: keep D = 12 (feasible, +12 USD, 11/11 zones) as the headline and report D = 8 as infeasible for full coverage, or run the exact integrated access benchmark (item 5.4)?
+5. Should the deck heuristic comparison appear in the paper as the proposal's own planner (regret 0.1-5.9 %), or only in the notes?
+6. Keep `outputs/e9_bilevel/_first_attempt/` in the public repository as a documented superseded run, or archive it outside the repository?
+7. Carry-overs from rounds 2-3 still open: periodic end condition, r_i vs a_i response reference, 8 h / rolling horizon, REORDER_POINT redesign, fleet-size sweep at x1.5.
+
+## 7. File locations
+
+| content | path |
+|---|---|
+| design note (+ relaunch addendum) | `notes/bilevel_siting_design.md` |
+| binding decisions E9R.1-E9R.4 | `notes/DECISIONS.md`, "E9 relaunch decisions" |
+| consolidated report | `ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md` |
+| E9.1 validation | `ebike_swap_sim/outputs/e9_bilevel/validate/RESULTS_final.md` (records.jsonl, results.csv, agreement.json, layouts_m1.png, map_validate_m1.png, solve_times_m1.png) |
+| E9.2 budget sweep | `ebike_swap_sim/outputs/e9_bilevel/sweep/RESULTS_final.md` (records.jsonl, results.csv, pareto.csv, map_sites_final.png, pareto_final.png, greedy_trajectory_final.png; `pareto.png` and `map_budget_*.png` are auto-generated and superseded for reading) |
+| E9.3 role sets | `ebike_swap_sim/outputs/e9_bilevel/roles/RESULTS_final.md` (roles_priced_moves.png, roles_components.png, roles_map.png, roles.png) |
+| E9.4 deck heuristic | `ebike_swap_sim/outputs/e9_bilevel/deck/RESULTS_final.md` (deck_vs_bilevel_final.png, map_deck_vs_bilevel.png, deck_demand_proxy.png) |
+| E9.5 cross-evaluation | `ebike_swap_sim/outputs/e9_bilevel/cross/RESULTS_final.md` (cross_eval.csv, cross_eval_final.png) |
+| E9.6 access row | `ebike_swap_sim/outputs/e9_bilevel/access/RESULTS_final.md` (access_map.png, access_coverage.png, access.png, access_search.png) |
+| candidates, launch plan, logs, lower-level cache | `ebike_swap_sim/outputs/e9_bilevel/{candidates.csv, candidates.json, launch2.json, logs/, cache/}` |
+| superseded first attempt | `ebike_swap_sim/outputs/e9_bilevel/_first_attempt/` (README.md lists the four failures) |
+| code | `ebike_swap_sim/ebike_swap_sim/{sites_nyc, bilevel}.py`, `ebike_swap_sim/experiments/e9_bilevel_siting.py`, `ebike_swap_sim/tests/test_bilevel.py` |
+
+The script-written `RESULTS.md` in each sub-folder is intermediate; `RESULTS_final.md` is the deliverable in each, and `RESULTS_E9.md` names the source of every consolidated number.

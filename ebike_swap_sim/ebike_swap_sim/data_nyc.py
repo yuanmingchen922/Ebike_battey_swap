@@ -1049,9 +1049,17 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
                       physics: Optional[Dict[str, float]] = None,
                       pruning: Optional[Dict[str, Any]] = None,
                       paths: Optional[Dict[str, str]] = None,
-                      name: Optional[str] = None) -> Instance:
+                      name: Optional[str] = None,
+                      depots: Optional[Sequence[Any]] = None) -> Instance:
     """Semi-real NYC E2 instance (R2.4) with the R2.2 instance-family conventions
     and the R2.1 ``cost_variant`` switch.
+
+    ``depots`` (bi-level siting, ``notes/bilevel_siting_design.md`` section 4.5): grid
+    nodes ``(ix, iy)`` (or ``(lat, lon)`` pairs of floats, snapped) at which the bikes
+    start round robin instead of the facility sites.  ``None`` keeps today's behaviour
+    (``depots = site_nodes``), so ``nyc4h`` is byte-identical.  Depot nodes are added to
+    ``V`` after the sites; the random stream is untouched, so the orders and the bikes'
+    ``q0`` of a seed do not depend on ``depots`` or on ``site_latlon``.
 
     Pipeline (mirrors ``generator.make_synthetic_instance``, reusing its helpers
     ``build_route_library``, ``TimeDependentGenerator`` and spec merging):
@@ -1148,6 +1156,17 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
     site_nodes = [v for v in site_nodes if not (v in seen or seen.add(v))]
     if not site_nodes:
         raise ValueError("no facility site could be placed")
+    depot_nodes: List[Node] = []
+    if depots is not None:
+        for d in depots:
+            if isinstance(d, (list, tuple)) and len(d) == 2 and all(isinstance(x, float) for x in d):
+                v = box.snap(float(d[0]), float(d[1]))
+            else:
+                v = _node(d)
+            if v not in depot_nodes:
+                depot_nodes.append(v)
+        if not depot_nodes:
+            raise ValueError("depots given but empty")
 
     # 4. orders -----------------------------------------------------------------
     window_start = float(dem["window_start_h"])
@@ -1213,7 +1232,7 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
 
     # 7a. node set and routes -----------------------------------------------------
     nodes: List[Node] = []
-    for v in rest_nodes + site_nodes + cust_nodes:
+    for v in rest_nodes + site_nodes + depot_nodes + cust_nodes:
         if v not in nodes:
             nodes.append(v)
     routes = build_route_library(net, nodes, phys)
@@ -1256,7 +1275,7 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
     lo_frac, hi_frac = dem["init_frac"]
     q_lo = int(math.ceil(lo_frac * L - 1e-9))
     q_hi = max(q_lo, int(math.floor(hi_frac * L + 1e-9)))
-    depots = list(site_nodes)
+    depots = list(depot_nodes) if depot_nodes else list(site_nodes)
     bikes = [Bike(id=k + 1, v0=depots[k % len(depots)], q0=int(rng.integers(q_lo, q_hi + 1)))
              for k in range(int(n_bikes))]
 
@@ -1280,6 +1299,7 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
             "orders_per_bike_hour": orders_per_bike_hour, "n_orders": n_orders, "H": H,
             "Delta_min": Delta_min, "L": L, "battery_wh": battery_wh, "eta": eta,
             "tail_slots": tail, "n_sites": n_sites, "site_min_sep_blocks": site_min_sep_blocks,
+            **({"depots": [list(d) for d in depot_nodes]} if depot_nodes else {}),
             "facilities_spec": fac_spec, "demand_spec": dem, "physics": phys, "pruning": pruning,
             "restaurant_sampler": {"radius_m": rest.radius_m, "radius_growth": rest.radius_growth,
                                    "min_candidates": rest.min_candidates, "zipf_s": rest.zipf_s,

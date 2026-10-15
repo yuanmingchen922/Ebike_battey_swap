@@ -1,0 +1,43 @@
+% brief.tex -- supervisor brief: what we built, what we found, what is wrong.
+% Build: cd paper && pdflatex -interaction=nonstopmode brief && pdflatex -interaction=nonstopmode brief
+% Body: brief_body.tex (sections 1-8); issue boxes: brief_issues.tex (input from section 6 of the body).
+% Figures are read from figs/ relative to this folder.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{capt-of}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+\setlist{topsep=2pt,itemsep=1pt,parsep=0pt,partopsep=0pt,leftmargin=*}
+\usepackage{parskip}
+\setlength{\parskip}{3pt plus 1pt}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+
+% Ragged-right paragraph column (no inter-word stretching in narrow cells).
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\newenvironment{issuebox}[1]{\par\medskip\noindent\textbf{#1}\par\nopagebreak\small}{\par\medskip}
+\newenvironment{notebox}[1]{\par\medskip\noindent\textbf{#1}\par\nopagebreak\small}{\par\medskip}
+
+\newcommand{\takeaway}[1]{\par\noindent\textbf{Takeaway: }#1\par}
+
+% Title, author and date are typeset by hand (compact block) below.
+\title{E-bike battery swapping in NYC: what we built, what we found, what is wrong}
+\author{Mingchen Yuan}
+\date{14 October 2026}
+
+\begin{document}
+\begin{center}
+{\Large\bfseries E-bike battery swapping in NYC:\\[2pt] what we built, what we found, what is wrong\par}\vspace{2pt}
+{\normalsize Mingchen Yuan \quad\textperiodcentered\quad 14 October 2026\par}
+\end{center}
+\vspace{-6pt}
+\input{brief_body}
+\end{document}

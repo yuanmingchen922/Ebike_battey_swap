@@ -1,0 +1,372 @@
+% brief_body.tex -- sections only; the assembler supplies the preamble
+% (booktabs, array, graphicx, hyperref). Figures are read from figs/
+% relative to paper/ (the absolute path contains a space, which graphicx
+% does not accept reliably).
+%
+% Sources of every number (cited again next to each table):
+%   README  = OR Model-Battery Swap/README.md (sections 5-7)
+%   E2U     = ebike_swap_sim/outputs/e2u_round3/RESULTS_final.md
+%   E3U     = ebike_swap_sim/outputs/e3u_round3/RESULTS_final.md
+%   E4U     = ebike_swap_sim/outputs/e4u_round3/RESULTS_final.md
+%   E8      = ebike_swap_sim/outputs/e8_round3/RESULTS_final.md
+%   E1      = ebike_swap_sim/outputs/e1/RESULTS.md
+%   REVIEW  = notes/E2_formulation_review.md
+%   COST    = notes/cost_calibration.md (section 9) and notes/DECISIONS.md (R2.1)
+%   SUMMARY = notes/SUMMARY.md (round headers carry the dates)
+%
+% Vocabulary (used everywhere in this brief): "plan" = the E2 integer program,
+% "rule" = the nearest-rider baseline policy, costs in USD after the number,
+% "dropped" = unserved order.
+
+\ifdefined\takeaway\else
+\newcommand{\takeaway}[1]{\par\noindent\textbf{Takeaway: }#1\par}
+\fi
+\newcommand{\caveat}[1]{\par\noindent\emph{Caveat: }#1\par}
+
+% ======================================================================
+\section*{1. One-page summary}
+% ======================================================================
+
+\noindent\textbf{The question.} Does a coordinated plan (the supervisor's integer program E2: who delivers what, when to swap, when to charge, when to ship batteries) beat a simple dispatch rule on the same evening? And do stations, spare batteries and shuttles matter?
+
+\noindent\textbf{What we built.}
+\begin{itemize}\small\setlength{\itemsep}{0pt}
+  \item E2 implemented as written (equations (1)--(33), Gurobi); toy example reproduced exactly ($J = 12.5$).
+  \item A comparable baseline rule: nearest free rider, swap at 3 of 12 levels, charge on demand, no crystal ball.
+  \item Instance generator with USD costs from NYC sources and a literature-based demand model; one independent cost checker prices both methods.
+  \item NYC data pipeline (real Midtown restaurants, census weights, real candidate sites); three experiment rounds, 10 seeds, every solver cell filled.
+\end{itemize}
+
+\noindent\textbf{Headline results} (final, round 3; gap $=$ (rule $-$ plan)/rule; $\pm$ is a 95\,\% $t$-interval over random evenings).
+% source: README section 6.1; E2U summary; E3U summary; E4U summary; E8 section 2
+\begin{center}\small
+\begin{tabular}{@{}L{3.0cm}L{8.2cm}L{3.7cm}@{}}
+\toprule
+Question & Result & Read \\
+\midrule
+Value of coordination & \textbf{29.6\,\% $\pm$ 5.6} cheaper, cheaper on all 30 evenings; 15.4 / 31.2 / 42.1\,\% at quiet / normal / busy demand & Sec.\ 5, E2u \\
+Where the saving is & 59\,\% lateness, 32\,\% customer waiting, 8\,\% dropped orders, $<1$\,\% riding $+$ electricity & Sec.\ 5, E2u \\
+A 90\,\% service guarantee & costs 0.2\,\% at quiet and 5.5\,\% at normal demand; \textbf{impossible} at 1.5$\times$ demand with 6 bikes & Sec.\ 5, service share \\
+Shuttles and stations & shuttles worth $\approx 0$ (8.6 USD, and only because of end-of-day battery targets); 1 spare battery per site is enough for the plan & Sec.\ 5, E3u / E4u \\
+Real Midtown data & \textbf{31.8\,\% $\pm$ 8.2} (busiest-cell sites), 30.5\,\% $\pm$ 8.6 (landmark sites); positive on 20 of 20 & Sec.\ 5, E8 \\
+Where to put stations & \textbf{one} co-located site (L02, NoMad) with 3--4 spares and 2 chargers at every budget; 654 USD per evening, 85.2\,\% served; a second site never pays & Sec.\ 5, E9 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% Numbering below matches Section 6 (Issues 1, 2, 3 and 5).
+\par\smallskip\noindent\textbf{Problems found (numbers as in Section 6)}\par
+\begin{itemize}\small\setlength{\itemsep}{0pt}
+  \item \textbf{Issue 1 -- The 29.6\,\% mixes coordination with perfect foresight.} The plan sees all orders at 17:00; the rule learns them as they arrive. Rolling-horizon test pending.
+  \item \textbf{Issue 2 -- Stations and chargers never bind at this scale.} 9 spares for 6 bikes over 4 h: chargers and power are worth 0 USD, the relaxed plan buys 0 kWh in 20 of 20 Midtown runs, moving the sites changes the plan's cost by $\le 0.41$ USD. Same on the siting family (Issue 13).
+  \item \textbf{Issue 3 -- Shuttle value exists only because of the end-of-day battery targets.} 8.6 USD with the targets, 0.00 USD without, on 15 of 15 layout--seed pairs.
+  \item \textbf{Issue 5 -- The wage convention decides whether the plan drops orders.} With rider wages priced per order (\texttt{usd\_A}) the plan drops 83--86\,\% of orders; we use \texttt{usd\_sunk} (wages sunk), a modelling decision, not a fact.
+\end{itemize}
+\par\smallskip
+
+\noindent\textbf{Decisions needed from the supervisor} (details: Issues 3, 4, 5; next steps in Section 7).
+\begin{enumerate}\small\setlength{\itemsep}{0pt}
+  \item \textbf{End-of-day battery targets:} keep as written (0.3 USD per evening, but they create all the shuttle value), set $R_{\mathrm{end}} = 0$ at swap-only sites, or make ``targets off'' the headline?
+  \item \textbf{Service share:} report the 90\,\% rule as the main setting (0.2\,\% / 5.5\,\% / impossible), 85\,\% as sensitivity, drop the round-2 two-step variant?
+  \item \textbf{Costs:} accept \texttt{usd\_sunk} ($P = 30$, $w = 18$, $v = 36$ USD; wages sunk), and start the waiting clock when the food is ready so the plan never drops more orders than the rule?
+\end{enumerate}
+
+\clearpage
+% ======================================================================
+\section*{2. What we did}
+% ======================================================================
+% source: SUMMARY round headers (dates), round 1 "Code review conclusions", round 2 1.6; README section 5; REVIEW status line; bilevel_siting_design.md header
+\begin{center}\small
+\begin{tabular}{@{}L{1.6cm}L{1.6cm}L{11.7cm}@{}}
+\toprule
+Date & Round & What happened \\
+\midrule
+Oct 11 & Round 1 & E2 extracted from the four PDFs and implemented; toy example reproduced ($J=12.5$, $11.2$, $106$); baseline rule written; one line-by-line code review (no model error; two fairness flaws in the rule fixed); E1--E4 in toy cost units, 10 riders, 2 h. \\
+Oct 12 & Round 2 & Toy units replaced by USD from NYC sources; 4 h window, 6 riders, 36 orders, start charge 30--60\,\%; literature demand model; NYC data pipeline (restaurants, census, Kaggle); two-agent review (15 findings, 2 fixed); E2u / E3u / E4u / E8. \\
+Oct 12--13 & Round 3 & Hard service-share rule (33) at 90\,\% (85\,\% as sensitivity); every skipped solver cell filled; seeds raised to 10 / 5 / 6 / 10; $\approx 9$ h of solver time; GitHub repository (English only). \textbf{Final numbers.} \\
+Oct 13--14 & Review & 32 change proposals for E2 checked by two independent verdicts: no equation needs to change; bi-level siting study designed and started. \\
+Oct 14 & E9 & Bi-level station siting run on a stressed Midtown family (6 bikes, 12 candidate sites, 3 demand scenarios): validation, budget sweep, role sets, proposal-deck planner, access rule, cross-evaluation; 6 sub-experiments, about 7.9 h of solver time. A first launch on an 8-bike family was degenerate and was discarded and re-run. \\
+\bottomrule
+\end{tabular}
+\end{center}
+\takeaway{Round 3 reproduces every round-2 number exactly on the shared seeds; all changes in the headline figures come from new evenings, not from code changes.}
+
+% ======================================================================
+\section*{3. The model in plain words}
+% ======================================================================
+
+\noindent Time is cut into 5-minute steps, a battery into 12 levels (50 Wh each). Each rider follows a path through (place, time, battery level); each station keeps a ledger of batteries per level. The solver picks one path per rider and one ledger per station with the lowest total cost.
+
+% source: README sections 3-4 (glossary); REVIEW section 1
+\begin{center}\small
+\begin{tabular}{@{}L{4.6cm}L{5.4cm}L{4.9cm}@{}}
+\toprule
+Decision (variable) & Rule (constraint) & Cost term \\
+\midrule
+Which rider takes which order, when ($x$) & every order delivered once or dropped & waiting $w$ (18 USD/h), lateness $v$ (36 USD/h) \\
+Drop an order ($u$) & -- & penalty $P$ (30 USD) \\
+When to swap (part of $x$) & station must hold a full battery; one swap bay; swap takes 1 step & riding wear $\kappa$ (0.12 USD/km) \\
+When to charge, per level ($c$) & $\le$ chargers $C_j$; power $\le P_j$ and grid limit & electricity $\pi$ (0.32 USD/kWh) \\
+Ship batteries between sites ($h, z$) & shuttle capacity; batteries conserved & 20 USD per trip $+$ 1 USD per battery \\
+Sites, spares, chargers ($y, B, C$) & shelf space $K_j$; fixed in all experiments except E4 free sizing & rent $F_j$ 12.03 USD, 0.332 / 0.082 USD per spare / charger per 4 h \\
+End of day & $\rho=0.5$ of spares full, $R_{\mathrm{end}}=1$ full battery per swap site & -- \\
+Service (optional, round 3) & at least $\zeta = 90\,\%$ of orders served & -- \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent\small\emph{Symbols used later:} $\rho$, $R_{\mathrm{end}}$ $=$ end-of-day battery targets (17)--(18) (share of spares full; full batteries per swap site); $\zeta$ $=$ minimum share of orders served, the service-share rule (33); $P$ / $w$ / $v$ $=$ drop / waiting / lateness prices.\normalsize
+
+\noindent\textbf{Verification.} The toy example (2 riders, 3 orders) is reproduced exactly in all four documented cases, every ledger table matches step by step, the solver's objective always equals the independent cost checker, and a 32-proposal audit found no equation error (\texttt{notes/E2\_formulation\_review.md}).
+\takeaway{\textbf{No equation of E2 was changed} in any round; only the prices and the 90\,\% service rule (already part of the written model) were switched on.}
+
+% ======================================================================
+\section*{4. Setup}
+% ======================================================================
+
+% source: E2U "Setup and provenance" and solver statistics table (means 107 / 108 / 212 s, max 300 s, 0.89-1.58 M binaries);
+%         E3U solver line (OPTIMAL round 3 mean 79 s, range 40-124 s); E4U anomaly 10 (round-3 mean 124 s); E8 summary (553 k binaries, mean 45.5 s)
+\begin{center}\small
+\begin{tabular}{@{}L{4.2cm}L{10.7cm}@{}}
+\multicolumn{2}{@{}l}{\normalsize\textbf{Instance} (family \texttt{usd4h}, rounds 2--3).}\\[2pt]
+\toprule
+Item & Value \\
+\midrule
+Riders, window, orders & 6 bikes; 17:00--21:00 (4 h $=$ 48 steps of 5 min); 36 orders at normal demand (27 quiet, 54 busy) \\
+Battery & 12 levels of 50 Wh (600 Wh); riders start at 4--7 of 12 (30--60\,\%); 1 level reserve at the end \\
+Stations & 3 co-located sites, each 3 spares, 2 chargers, 4 kW, shelf 8; grid 8 kW (6 kW 18:00--20:00) \\
+Orders & food ready 20--35 min after placement; promised 25 min after ready (Kaggle FoodHub) \\
+Solver & Gurobi 13, 3 threads, 300 s limit; 0.9--1.6 M binary variables; 40--300 s per solve (means 107--212 s E2u, 79 s E3u, 124 s E4u); NYC 0.55 M, 45 s \\
+Seeds & E2u 10 $\times$ 3 demand levels; E3u 5; E4u 6 (3 for charger / power sweeps); E8 10 $\times$ 2 sitings \\
+\bottomrule
+\end{tabular}
+\end{center}
+\takeaway{9 spares for 6 bikes in 4 h: energy never runs out, so stations cannot matter on this instance (Issue 2).}
+
+\noindent\textbf{Costs} (\texttt{usd\_sunk}, the default, versus the toy units of the supervisor's example).
+% source: COST section 9 table and DECISIONS R2.1; README section 6.1 row "Drop penalty divided by half an hour of waiting"
+\begin{center}\small
+\begin{tabular}{@{}L{4.9cm}L{2.8cm}L{3.2cm}L{3.9cm}@{}}
+\toprule
+Cost & Symbol & Toy units & USD (\texttt{usd\_sunk}) \\
+\midrule
+Riding, per km & $\kappa$ & 1 & 0.12 (wear only) \\
+Electricity, per kWh & $\pi$ & 2 & 0.32 \\
+Dropped order & $P$ & 100 & 30 \\
+Customer waiting, per hour & $w$ & 12 & 18 \\
+Lateness beyond promise, per hour & $v$ & 24 & 36 \\
+Shuttle trip $+$ per battery & $f_e$, $v_{\mathrm{reb}}$ & 5, 0.2 & 20, 1 \\
+Station rent per window; per spare; per charger & $F_j$, $b^B$, $b^C$ & 20, 3, 2 (2 h) & 12.03, 0.332, 0.082 (4 h) \\
+\textbf{Drop penalty / (waiting $\times$ 30 min)} & $P/(w\cdot 0.5\,\mathrm{h})$ & \textbf{50} & \textbf{3.3} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\takeaway{The last row is why the results changed shape between rounds: in toy units a drop is almost never worth it; in USD it sometimes beats a late delivery.}
+
+\noindent\textbf{Data: what is real and what is synthetic.}
+% source: README section 5 (round 2 bullets) and section 8; notes/datasets.md; notes/literature_demand_model.md; E8 section 6
+% (downloaded but unused: cyclist crashes and bicycle counters, loaded as a risk layer / peak-hour cross-check only -- left out of the table for space)
+\begin{center}\small
+\begin{tabular}{@{}L{1.6cm}L{3.5cm}L{9.8cm}@{}}
+\toprule
+ & Item & Source / value \\
+\midrule
+Real & Restaurants & NYC health-department inspection list (DOHMH): 27,030 restaurants with coordinates and cuisine; 4,607 in the Midtown / Chelsea / Flatiron box \\
+Real & Neighbourhood demand weights & Census (ACS 2020--2024) tables for 262 neighbourhoods, weighted by the formula of three published studies (age dominates: 18--29 order $\approx$ 3.4$\times$ as often as 60+) \\
+Real & Order timing and cuisine mix & Kaggle FoodHub (1,898 orders): prep 20--35 min, promise 25 min, cuisine shares, Zipf restaurant popularity \\
+Real & Costs & NYC minimum pay, Con Edison tariff, battery and cabinet prices, city cabinet rules (2025--2026) \\
+Real & Candidate sites (E8) & three busiest restaurant cells; 8th Ave / W 34th, Union Square, Grand Central \\
+Synthetic & Street network & 150 m grid rotated to Manhattan's 29$^\circ$ street angle; real points snapped onto it; synthetic hills and traffic lights \\
+Synthetic & Hourly demand curve & lunch 28\,\%, dinner 45\,\%, late 12\,\% (declared assumption; no paper gives one) \\
+\bottomrule
+\end{tabular}
+\end{center}
+\takeaway{Real data decide where demand sits; distances and timing are still synthetic.}
+
+% ======================================================================
+\section*{5. Results}
+% ======================================================================
+
+\subsection*{E1 -- Does the code reproduce the supervisor's toy example?}
+% source: E1 results table; README section 6.2
+\noindent Toy example (2 riders, 3 orders, 8 steps), expected vs obtained: full model 12.5 / 12.5; no end-of-window target ($\rho = 0$) 11.2 / 11.2; shuttles forbidden 106 / 106; simple rule without / with shuttles 108 / 14.5 in both.
+\takeaway{The code is a faithful copy of the written model: every documented cost and every ledger table is reproduced.}
+\caveat{The toy has 2 battery levels and 8 steps; it checks the equations, not the behaviour at scale.}
+
+\subsection*{E2u -- What is coordination worth?}
+\noindent\textit{Question:} on the same orders, how much cheaper is the plan than the nearest-rider rule? (30 evenings: 10 seeds $\times$ 3 demand levels.)
+
+% source: E2U "Headline gap" table and "Gap decomposition" table
+\begin{center}\small
+\begin{tabular}{@{}L{3.2cm}rrrL{3.6cm}@{}}
+\toprule
+Demand & Orders & Rule, USD & Plan, USD & Gap \\
+\midrule
+$\times$0.75 (quiet) & 27 & 577 & 480 & 15.4\,\% $\pm$ 7.3 \\
+$\times$1 (normal) & 36 & 993 & 659 & 31.2\,\% $\pm$ 9.1 \\
+$\times$1.5 (busy) & 54 & 1,930 & 1,098 & 42.1\,\% $\pm$ 5.7 \\
+All 30 evenings & & 1,167 & 746 & \textbf{29.6\,\% $\pm$ 5.6} \\
+Of the 421 USD saving & \multicolumn{4}{L{10.5cm}}{59\,\% lateness, 32\,\% waiting, 8\,\% dropped orders, $<1$\,\% riding $+$ electricity; end-of-day targets cost 0.34 USD per evening} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent\begin{minipage}[c]{0.47\linewidth}\centering
+\includegraphics[width=\linewidth]{figs/e2_gap.png}
+\captionof{figure}{\small E2u. Gap per demand level (dots $=$ seeds, bar $=$ mean, whisker $=$ 95\,\% interval) for the written plan, the plan with the 90\,\% / 85\,\% service rule and the plan without end-of-day targets.}
+\end{minipage}\hfill
+\begin{minipage}[c]{0.50\linewidth}
+\takeaway{The plan is cheaper on every evening (3.7--51.8\,\%). The saving is punctuality: 1.2 late orders per normal evening versus 16.5 for the rule, same share of orders served (87.5 vs 87.2\,\%). The plan's cost barely varies between evenings (4--5\,\%); the rule's varies 15--22\,\%.}
+\caveat{The plan knows all 36 orders at 17:00; the rule learns them as they arrive. Part of the 29.6\,\% is foresight, not coordination (Issue 1). On quiet evenings the plan drops slightly more orders than the rule (1.5 vs 0.9 of 27) because at 30 USD a drop is cheaper than a late delivery (Issue 5).}
+\end{minipage}
+
+\subsection*{Service-share constraint -- What does a service guarantee cost?}
+\noindent\textit{Question:} if the plan must serve at least 90\,\% (or 85\,\%) of orders, how much more does it cost, and is it always possible?
+
+% source: E2U "Service-share constraint (33)" table and x1.5 infeasibility table
+\begin{center}\small
+\begin{tabular}{@{}L{2.2cm}L{1.6cm}L{2.0cm}L{4.3cm}L{4.3cm}@{}}
+\toprule
+Minimum served & Demand & Possible? & Extra cost over the plain plan & Share served: rule / plan / plan $+$ guarantee \\
+\midrule
+90\,\% & $\times$0.75 & 10 of 10 & 0.9 USD (0.2\,\%), 3 of 10 evenings affected & 96.7 / 94.4 / 95.6\,\% \\
+90\,\% & $\times$1 & 10 of 10 & 37.4 USD (5.5\,\%), 8 of 10 affected, 1.4--176 USD & 87.2 / 87.5 / 92.2\,\% \\
+90\,\% & $\times$1.5 & \textbf{0 of 10} & -- (best possible share 74--80\,\% where proven, $\le 83\,\%$ by bound; 49 of 54 required) & 62.6 / 69.8 / -- \\
+85\,\% & $\times$1 & 10 of 10 & 8.0 USD (1.1\,\%), 2 of 10 affected & 87.2 / 87.5 / 88.6\,\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent\begin{minipage}[c]{0.47\linewidth}\centering
+\includegraphics[width=\linewidth]{figs/e2_zeta_panel_a.png}
+\captionof{figure}{\small Service share: extra cost of the 90\,\% / 85\,\% guarantee per seed (no bars at $\times$1.5: infeasible on all 10 seeds).}
+\end{minipage}\hfill
+\begin{minipage}[c]{0.50\linewidth}
+\takeaway{A 90\,\% promise is almost free on a quiet evening, costs about 5\,\% on a normal one (bought with a few late deliveries: 5.7 instead of 1.2), and cannot be kept on a busy evening with 6 bikes: that is a fleet-size question, not a scheduling one (Issue 4).}
+\caveat{The guaranteed plan still beats the rule by 27.8\,\% $\pm$ 8.7 at normal demand. The 1.5$\times$ infeasibility was proven by solver bounds on 4 of 10 seeds rather than closed solves; how many bikes would make 90\,\% feasible has not been run.}
+\end{minipage}
+
+\subsection*{E3u -- Are shuttles and separate charging hubs worth it?}
+\noindent\textit{Question:} if charging moves to a separate hub (same 9 batteries and 6 chargers in every layout), what does it cost, and how much do shuttles help? (5 seeds, all 60 solver cells solved.)
+
+% source: E3U "Headline numbers" and tables T1-T3, T5
+\begin{center}\small
+\begin{tabular}{@{}L{3.4cm}rrL{2.8cm}L{2.7cm}L{2.4cm}@{}}
+\toprule
+Layout & Plan, USD & No shuttles & Value of shuttles & Extra vs (a) & Gap vs rule \\
+\midrule
+(a) 3 sites swap $+$ charge & 638 & 638 & 0.01 & -- & 21.3 $\pm$ 11.3\,\% \\
+(b) 3 swap sites $+$ 1 hub & 690 & 699 & 8.6 $\pm$ 10.1 (0 without targets) & $+$52.2 (29.2 is hub rent) & 18.4 $\pm$ 10.6\,\% \\
+(c) 3 swap sites $+$ 2 hubs & 720 & 728 & 8.6 $\pm$ 10.1 (0 without targets) & $+$81.4 (58.4 is hub rent) & 17.8 $\pm$ 10.4\,\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+\takeaway{Separating charging from swapping costs about 23 USD of operations plus the hub rent; the ranking co-located $<$ 1 hub $<$ 2 hubs holds on every seed. Shuttles are worth nothing once the end-of-day targets are dropped: in a 4 h window the 9 spares never run out (Issue 3). The rule's own ``ship when low'' habit hurts on every layout and every seed ($+$165 to $+$207 USD per evening: 5--14 trips at 20 USD each, at most one order rescued).}
+\caveat{The ``shuttles allowed'' cells of layouts (b) and (c) stop where the solver could not prove the answer within 2\,\%, even with 600 s, so 8.6 USD is a lower bound (upper bound 22 USD; Issue 7). Intervals on the gap are wide ($\pm$ 10--11 points, 5 seeds).}
+
+\subsection*{E4u -- How big should a station be?}
+\noindent\textit{Question:} what happens to cost when spare batteries ($B$), chargers ($C$) and site power ($P$) change? (6 seeds for the battery sweep; 3 for chargers and power; full 20-cell $B \times C$ grid on seed 0.)
+
+% source: E4U "Sweep B" tables (ILP and baseline), summary sentences 1-3
+\begin{center}\small
+\begin{tabular}{@{}L{3.2cm}rrL{6.6cm}@{}}
+\toprule
+Spares per site & Plan, USD & Rule, USD & Worth of the extra battery to the rule \\
+\midrule
+1 & 641 & 1,023 & 44.2 $\pm$ 21.6 USD per evening (1 $\to$ 2) \\
+2 & 641 & 890 & 6.1 $\pm$ 10.8 (2 $\to$ 3), not significant \\
+3 (default) & 641 & 872 & $\approx 0$ \\
+4 & 642 & 874 & $\approx 0$ \\
+6 & 644 & 867 & -- \\
+Free sizing by the plan & \multicolumn{3}{L{10.7cm}}{buys only 3--4 batteries and 2--4 chargers for the whole area (default 9 and 6), saving 1.43 USD; at those lean sizes the rule collapses to 80\,\% served and the gap is 33.5\,\% $\pm$ 10.5} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent\begin{minipage}[c]{0.44\linewidth}\centering
+\includegraphics[width=\linewidth]{figs/e4_B_panel_a.png}
+\captionof{figure}{\small E4u. Total cost against spare batteries per site, plan (blue) and rule (orange); band $=$ 95\,\% interval over 6 seeds.}
+\end{minipage}\hfill
+\begin{minipage}[c]{0.53\linewidth}
+\takeaway{For the plan one spare per site is already enough (a second is worth 0.35 USD; chargers and power are worth exactly 0, shown by solves at every size). Station capital is the rule's lever, not the plan's; on 3 of 6 seeds the rule never reaches the plan's service level even with 6 spares per site.}
+\caveat{The charger and power sweeps rest on 3 seeds (values flat to 0.1 USD; Issue 12). The annualised figure (64,600 USD per battery-year for the rule's first spare) assumes every 4 h window looks like the dinner peak; it is an upper-bound convention.}
+\end{minipage}
+
+\subsection*{E8 -- Does the advantage survive real Manhattan data?}
+\noindent\textit{Question:} with real restaurants, real neighbourhood demand weights and real candidate sites in Midtown, is the plan still better? (6 riders, 36 orders, 10 seeds, two station placements.)
+
+% source: E8 section 2 (headline table: price of (17)-(18) 0.28 +/- 0.06 busiest, 0.26 +/- 0.05 grid), section 2a, section 4 (decomposition), section 5 (siting)
+\begin{center}\small
+\begin{tabular}{@{}L{4.8cm}rrL{4.4cm}@{}}
+\toprule
+Station placement & Rule, USD & Plan, USD & Gap \\
+\midrule
+Busiest restaurant cells & 1,014 & 670 & \textbf{31.8\,\% $\pm$ 8.2} \\
+Landmarks (8th Ave / W 34th, Union Sq, Grand Central) & 997 & 670 & 30.5\,\% $\pm$ 8.6 \\
+Service (busiest) & \multicolumn{3}{L{9.5cm}}{plan 85.8\,\% served, 1.5 late, 0.83 h to the door, 95 km; rule 83.9\,\%, 17.8 late, 1.07 h, 110 km} \\
+Where the saving is & \multicolumn{3}{L{9.5cm}}{59\,\% lateness, 35\,\% waiting, 6\,\% dropped; end-of-day targets cost 0.28 USD (busiest) / 0.26 USD (landmarks)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent\begin{minipage}[c]{0.40\linewidth}\centering
+\includegraphics[width=\linewidth]{figs/e8_map.png}
+\captionof{figure}{\small E8, seed 0. Study box with restaurants, neighbourhood demand heat map, both site placements (stars $=$ busiest cells, crosses $=$ landmarks) and the six rider paths.}
+\end{minipage}\hfill
+\begin{minipage}[c]{0.57\linewidth}
+\takeaway{Yes: positive on all 20 instances (18--51\,\%), same shape as the synthetic evenings. The plan's cost moves by at most 0.41 USD when the sites are relocated; the rule's swings by $-9$ to $+6$\,\% with no consistent direction. The plan absorbs where the stations are; the rule does not.}
+\caveat{The street network, hills and signals are still synthetic (real points snapped onto a 150 m grid; Issue 8). The plan's repositioning moves were restricted (not the rule's), so each gap is a lower bound; the lossless check has not been run (Issue 6). All 40 solves were proven optimal in 28--64 s.}
+\end{minipage}
+
+\newpage
+\subsection*{E9 -- Where to put the stations (bi-level siting)}
+% source: E9 = ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md (sections 3.3, 3.5, 3.6, 3.7) and sweep/, deck/, access/, cross/ RESULTS_final.md
+\noindent\textit{Question:} among 12 Midtown candidate corners, which stations should open, of which kind (swap-only, charge-only hub, or both) and how big, under an investment budget of $m \times 52{,}150$ USD, when the plan runs the evenings? (Planner above, E2 as written below on 3 demand scenarios; 6 bikes, 36 orders, start charge 3--6 of 12; cost per evening $=$ station cost spread over 4 h windows $+$ expected operating cost.)
+
+\begin{center}\small
+\begin{tabular}{@{}L{2.4cm}L{4.4cm}L{2.2cm}L{1.9cm}L{1.3cm}L{2.4cm}@{}}
+\toprule
+Budget $m$ (USD) & Chosen layout & Investment used & Cost per evening, USD & Served & Deck planner regret \\
+\midrule
+1 (52,150) & L02 swap $+$ charge, 3 spares, 2 chargers & 52,150 (100\,\%) & 654.38 & 85.2\,\% & 0.68 (0.10\,\%) \\
+2 (104,300) & L02 swap $+$ charge, 4 spares, 2 chargers & 52,600 (50\,\%) & 654.53 & 85.2\,\% & 12.56 (1.92\,\%) \\
+3 (156,450) & same & 52,600 (34\,\%) & 654.53 & 85.2\,\% & 25.53 (3.90\,\%) \\
+4 (208,600) & same & 52,600 (25\,\%) & 654.53 & 85.2\,\% & 38.78 (5.93\,\%) \\
+Any second site & \multicolumn{5}{L{13.8cm}}{$+$11.9 to $+$12.2 USD per evening for a swap-only or co-located site, $+$29.4 for a charge-only hub, against an operating saving of at most 1.09 USD; shuttles used in 0 of 84 solves; role sets \{SC\}, \{S, SC\}, \{S, C, SC\} give the identical answer} \\
+Access rule (every zone within 1.8 km of a swap point) & L02 $+$ L05 (Rockefeller south) & 103,050 & 666.61 ($+$12.08) & 85.2\,\% & 11 of 11 zones covered \\
+Cross-check, 5 seeds & \multicolumn{5}{L{13.8cm}}{location robust (L02 under the plan and under the rule; L01 a tie); size not: the 4th spare is worth 47.4 USD per evening to the rule and 0.15 USD to the plan} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\noindent\begin{minipage}[c]{0.60\linewidth}\centering
+\includegraphics[width=\linewidth]{figs/e9_map_sites.png}
+\captionof{figure}{\small E9. The 12 candidates (circle area $\sim$ restaurants in the cell), the chosen site L02 (star) and, per candidate, its cost per evening as the only site or the cost increase when added as a second site.}
+\end{minipage}\hfill
+\begin{minipage}[c]{0.37\linewidth}\raggedright
+\takeaway{\textbf{One well-stocked swap-and-charge station is the whole infrastructure: every method (exhaustive enumeration, integrated two-stage program, greedy $+$ local search, all three role sets) returns L02 alone, and the budget beyond one unit stays unspent. The proposal's rule ``one station per budget unit'' loses 0.1 / 1.9 / 3.9 / 5.9\,\% at $m = 1..4$, exactly the setup of the extra stations.}}
+\caveat{With 6 bikes the fleet, not the batteries, limits service: the served share is 85.2\,\% for every layout with $\ge 3$ spares, so siting moves only travel and electricity (Issue 13); the 12-candidate answers are heuristic incumbents without a certified gap (Issue 14); the access run at 1.2 km was cut short (Issue 15). Same synthetic-grid caveat as E8.}
+\end{minipage}
+
+% ======================================================================
+\section*{6. Problems and open issues}
+% ======================================================================
+\input{brief_issues}
+
+% ======================================================================
+\section*{7. Next steps}
+% ======================================================================
+% source: REVIEW sections 5-7 (SC-1, SC-2, B12); SUMMARY round 3 sections 4-5; notes/bilevel_siting_design.md
+\begin{itemize}\setlength{\itemsep}{2pt}
+  \item \textbf{Energy-stressed instance family} (review item SC-1; answers Issues 2 and 4): 8 bikes, 48 orders, start charge 2--4 of 12, 1 spare and 1 charger per site at 1.4 kW, grid 4 kW; then an 8 h window. Success $=$ a battery constraint binds and a spare is worth more than its 0.332 USD holding cost. Includes a fleet-size sweep (6--10 bikes) at 1.5$\times$ demand: ``impossible with 6 bikes'' becomes a capacity curve.
+  \item \textbf{Rolling horizon} (SC-2; answers Issue 1): re-solve the unchanged E2 every few steps on the orders known so far (look-ahead 0 / 10 / 20 min), carry rider and station state forward, price the whole evening afterwards. The share of the 29.6\,\% that survives at zero look-ahead is coordination proper. Each window solves in seconds.
+  \item \textbf{Bi-level siting: done} (E9, Section 5; Issues 13--15). The planner (sites, roles, sizes under a budget of 52,150 USD per unit) with E2 as written below, run on the stressed Midtown family: one co-located station at L02 at every budget. Next: a family in which a second site changes who gets served (lower start charge, longer window or fewer spares per site, since 2 spares is the only size the plan reacts to); candidates across all of Manhattan; a multi-day lower level where chargers and hubs can matter; siting evaluated under the policy that will actually run the fleet.
+\end{itemize}
+
+% ======================================================================
+\section*{8. Where to find things}
+% ======================================================================
+% source: README section 2 (repository table) and SUMMARY round 3 section 6
+\noindent GitHub: \url{https://github.com/yuanmingchen922/Ebike_battey_swap} (English only; the supervisor's PDFs, instance dumps and workflow logs are not included). Paths relative to the repository root:
+\begin{itemize}\setlength{\itemsep}{0pt}
+  \item \texttt{README.md} -- overview, glossary, final numbers, how to run.
+  \item \path{notes/} -- \path{SUMMARY.md} (full story of rounds 1--3), \path{DECISIONS.md} (every modelling choice), \path{E2_formulation_review.md} (the 32-proposal audit), \path{cost_calibration.md} (every USD figure with its range), \path{datasets.md}.
+  \item \path{ebike_swap_sim/experiments/*_round3.py} -- one script per final experiment (code, baseline, generator and NYC loader one level up; 136 tests).
+  \item \path{ebike_swap_sim/outputs/*_round3/RESULTS_final.md} (and \path{e1/RESULTS.md}) -- \textbf{the deliverables:} final reports, figures, raw records.
+  \item \path{ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md} -- the siting study, with sub-reports and figures in \path{validate/}, \path{sweep/}, \path{roles/}, \path{deck/}, \path{access/}, \path{cross/}; design in \path{notes/bilevel_siting_design.md}.
+\end{itemize}
+

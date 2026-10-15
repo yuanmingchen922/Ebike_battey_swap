@@ -1,0 +1,28 @@
+{
+ "launched_at": "2026-10-14 (second attempt on family nyc4h_stress2; first attempt archived in _first_attempt/)",
+ "cwd": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim",
+ "env": {"PYTHONPATH": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim"},
+ "threads_per_solve": 3,
+ "concurrent_processes": 3,
+ "also_running": {"validate": {"pid": 1504, "note": "E9.1 --validate (nyc4h_stress2, 4 candidates, seeds 0 1, 6 bikes, m=1, all_candidates reposition) launched earlier, still running; log logs/validate.log, outputs validate/"}},
+ "preflight": {"dry_run": "sweep, roles, deck, cross, access, validate all exit 0 on nyc4h_stress2 (6 bikes, reposition open_sites, min_served_share 0.5, s_needs_charge true, access_mode repair)"},
+ "processes": [
+  {"name": "sweep", "pid": 1837,
+   "command": "nohup python3 experiments/e9_bilevel_siting.py --sweep --threads 3 --wall-budget 18000",
+   "log": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/logs/sweep.log", "out_dir": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/sweep",
+   "planned": "E9.2 greedy (best singleton by V, ratio afterwards) + local search, roles S/C/SC, 12 candidates, seeds 0-2 (p=1/3), 6 bikes, budgets m=1..4; size menu S B1-3, SC B1-3 x C1-2, hubs C2/C4; up to 132 moves per step, k_screen 5 per role; TimeLimit 300 s; one integrated ILP (600 s) per budget warm-started from greedy; outputs records.jsonl, results.csv, pareto, maps, RESULTS.md",
+   "wall_budget_s": 18000, "expected_wall_min": 300},
+  {"name": "roles>deck>cross (chained)", "pid": 1838, "child_pid_roles": 1841,
+   "command": "nohup sh -c 'python3 experiments/e9_bilevel_siting.py --roles --threads 3 --wall-budget 7200 > logs/roles.log; python3 experiments/e9_bilevel_siting.py --deck --threads 3 --wall-budget 3600 > logs/deck.log; python3 experiments/e9_bilevel_siting.py --cross --threads 3 --wall-budget 5400 > logs/cross.log'",
+   "log": ["/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/logs/roles.log", "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/logs/deck.log", "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/logs/cross.log", "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/logs/chain.log"],
+   "out_dir": ["/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/roles", "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/deck", "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/cross"],
+   "planned": "E9.3 roles: role sets SC_only / S_SC / S_C_SC x m=2,3, seeds 0-2, 6 bikes, greedy+LS (2 h); E9.4 deck: spin-and-adjust heuristic, 3 iterations, m=1..4, seeds 0-2 (1 h); E9.5 cross: every chosen layout from sweep/deck/roles/validate under ILP, baseline, relaxed-target ILP on seeds 0-4 (1.5 h)",
+   "wall_budget_s": 16200, "expected_wall_min": 270},
+  {"name": "access", "pid": 1839,
+   "command": "nohup python3 experiments/e9_bilevel_siting.py --access --threads 3 --wall-budget 7200",
+   "log": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/logs/access.log", "out_dir": "/Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/access",
+   "planned": "E9.6 greedy+LS with planner-only access row [U4] in repair/report mode: variants no_access, D=8, D=12 blocks; m=2,3; seeds 0-2; 6 bikes; no integrated run (--zeta unset)",
+   "wall_budget_s": 7200, "expected_wall_min": 120}
+ ],
+ "notes": "Runs resume by re-running the same command (records.jsonl + shared cache /Users/yuanmingchen/Desktop/Research/OR Model-Battery Swap/ebike_swap_sim/outputs/e9_bilevel/cache, CACHE_VERSION e9-2). 4 Gurobi processes x 3 threads = 12 threads on 12 cores while validate (pid 1504) is still alive. Wall exhaustion now surfaces as status WALL_EXHAUSTED, not as 'no feasible layout'."
+}

@@ -1,0 +1,196 @@
+[
+ {
+  "id": "L01",
+  "label": "busiest cell 1",
+  "source": "busiest",
+  "lat": 40.75125634643909,
+  "lon": -73.9922327970978,
+  "node": [
+   13,
+   14
+  ],
+  "grid_connected": true,
+  "n_restaurants": 92,
+  "merged_labels": [
+   "Penn Station (7th Ave / W 32nd)"
+  ],
+  "zone": null,
+  "rank": 1
+ },
+ {
+  "id": "L02",
+  "label": "busiest cell 2",
+  "source": "busiest",
+  "lat": 40.74745383537406,
+  "lon": -73.98687039637127,
+  "node": [
+   17,
+   13
+  ],
+  "grid_connected": false,
+  "n_restaurants": 72,
+  "merged_labels": [],
+  "zone": null,
+  "rank": 2
+ },
+ {
+  "id": "L03",
+  "label": "busiest cell 3",
+  "source": "busiest",
+  "lat": 40.75454534651303,
+  "lon": -73.98169449295227,
+  "node": [
+   17,
+   19
+  ],
+  "grid_connected": false,
+  "n_restaurants": 55,
+  "merged_labels": [],
+  "zone": null,
+  "rank": 3
+ },
+ {
+  "id": "L04",
+  "label": "busiest cell 4",
+  "source": "busiest",
+  "lat": 40.75494373915295,
+  "lon": -73.97530040334033,
+  "node": [
+   20,
+   21
+  ],
+  "grid_connected": false,
+  "n_restaurants": 45,
+  "merged_labels": [],
+  "zone": null,
+  "rank": 4
+ },
+ {
+  "id": "L05",
+  "label": "busiest cell 5",
+  "source": "busiest",
+  "lat": 40.759273020605676,
+  "lon": -73.97824389067293,
+  "node": [
+   17,
+   23
+  ],
+  "grid_connected": false,
+  "n_restaurants": 42,
+  "merged_labels": [],
+  "zone": null,
+  "rank": 5
+ },
+ {
+  "id": "L06",
+  "label": "busiest cell 6",
+  "source": "busiest",
+  "lat": 40.767276435375656,
+  "lon": -73.98257460251406,
+  "node": [
+   12,
+   27
+  ],
+  "grid_connected": false,
+  "n_restaurants": 41,
+  "merged_labels": [],
+  "zone": null,
+  "rank": 6
+ },
+ {
+  "id": "L07",
+  "label": "8th Ave / W 34th St",
+  "source": "landmark",
+  "lat": 40.7527,
+  "lon": -73.9937,
+  "node": [
+   12,
+   15
+  ],
+  "grid_connected": true,
+  "n_restaurants": 18,
+  "merged_labels": [],
+  "zone": null,
+  "rank": 7
+ },
+ {
+  "id": "L08",
+  "label": "Union Square",
+  "source": "landmark",
+  "lat": 40.7359,
+  "lon": -73.9911,
+  "node": [
+   19,
+   4
+  ],
+  "grid_connected": true,
+  "n_restaurants": 2,
+  "merged_labels": [],
+  "zone": null,
+  "rank": 8
+ },
+ {
+  "id": "L09",
+  "label": "Grand Central Terminal",
+  "source": "landmark",
+  "lat": 40.7527,
+  "lon": -73.9772,
+  "node": [
+   20,
+   19
+  ],
+  "grid_connected": true,
+  "n_restaurants": 20,
+  "merged_labels": [],
+  "zone": null,
+  "rank": 9
+ },
+ {
+  "id": "L10",
+  "label": "zone centre MN0603",
+  "source": "zone",
+  "lat": 40.744704865084415,
+  "lon": -73.97667016885688,
+  "node": [
+   23,
+   14
+  ],
+  "grid_connected": false,
+  "n_restaurants": 9,
+  "merged_labels": [],
+  "zone": "MN0603",
+  "rank": 11
+ },
+ {
+  "id": "L11",
+  "label": "zone centre MN0402",
+  "source": "zone",
+  "lat": 40.76333228716626,
+  "lon": -73.9915566438355,
+  "node": [
+   9,
+   22
+  ],
+  "grid_connected": false,
+  "n_restaurants": 2,
+  "merged_labels": [],
+  "zone": "MN0402",
+  "rank": 12
+ },
+ {
+  "id": "L12",
+  "label": "zone centre MN0401",
+  "source": "zone",
+  "lat": 40.74967603527601,
+  "lon": -73.99948953727957,
+  "node": [
+   10,
+   11
+  ],
+  "grid_connected": false,
+  "n_restaurants": 0,
+  "merged_labels": [],
+  "zone": "MN0401",
+  "rank": 13
+ }
+]
