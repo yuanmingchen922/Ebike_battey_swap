@@ -1,0 +1,72 @@
+{
+ "plan": "re-plan M5 (Tier 2), conditional",
+ "lanes": [
+  {
+   "name": "r2t2_gate",
+   "batch": "2b_tier2",
+   "threads": 1,
+   "after": "-",
+   "command": "R7_BATCH=2b_tier2 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_gate.py --cost-dir outputs/r7_siting",
+   "hours": 0.0,
+   "range": [
+    0.0,
+    0.0
+   ],
+   "step": "gate"
+  },
+  {
+   "name": "r2t2_m5",
+   "batch": "2b_tier2",
+   "threads": 8,
+   "after": "r2t2_gate",
+   "command": "R7_BATCH=2b_tier2 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage price-list --evaluator in --tier all_candidates --layouts D29:SC:B3:C2 D28:SC:B3:C2 D34:SC:B3:C2 --cells D29:0-5 D28:0-5 D34:0-5 --warm-tier open_sites --cover-rows off --time-limit 1200 --wall 4.5 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 2 --threads 4 --max-threads 8 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 3.2,
+   "range": [
+    2.5,
+    4.2
+   ],
+   "step": "M5 Tier 2 bound pass (18 weekday cells, the 2 M3 cells re-used)"
+  },
+  {
+   "name": "r2t2_m4",
+   "batch": "2b_tier2",
+   "threads": 12,
+   "after": "r2t2_m5",
+   "command": "R7_BATCH=2b_tier2 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage m1 --m1-pass2 off --max-escalations 0 --wall-m1 1.5 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 1 --threads 1 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 0.5,
+   "range": [
+    0.4,
+    0.6
+   ],
+   "step": "M4 again (floor with the Tier 2 cell bounds)"
+  }
+ ],
+ "batches": [
+  {
+   "batch": "2b_tier2",
+   "lanes": [
+    "r2t2_gate",
+    "r2t2_m5",
+    "r2t2_m4"
+   ],
+   "hours": 3.7,
+   "usd": 3.92,
+   "range_h": [
+    2.9,
+    4.8
+   ]
+  }
+ ],
+ "instance": "r7i.4xlarge",
+ "usd_per_h": 1.0584,
+ "usable_threads": 12,
+ "max_rss_gb": 110.0,
+ "out_dir": "outputs/r7_siting",
+ "ilp_params": {},
+ "total_hours": 3.7,
+ "total_usd": 3.92,
+ "range_hours": [
+  2.9,
+  4.8
+ ]
+}

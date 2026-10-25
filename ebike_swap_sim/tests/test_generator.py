@@ -513,3 +513,36 @@ def test_price_peak_hours_separate_from_grid_peak():
     assert not isinstance(flat.pi, dict) and "price_peak_hours" not in flat.meta
     # legacy instances without pi_peak are byte-identical to before (no new meta key)
     assert flat.to_json() == make_synthetic_instance(seed=5, n_bikes=2, n_orders=4, H=36).to_json()
+
+
+# ---------------------------------------------------------------------------
+# round 5 options (notes/reading_to_model.md; full coverage in tests/test_r5_instances.py)
+# ---------------------------------------------------------------------------
+def test_round5_options_off_by_default_and_recorded_when_on():
+    plain = make_synthetic_instance(seed=5, n_bikes=2, n_orders=4, H=24)
+    again = make_synthetic_instance(seed=5, n_bikes=2, n_orders=4, H=24, energy_calibration=None, tariff=None,
+                                    home_charging=None, lockout=None)
+    assert plain.to_json() == again.to_json()
+    tou = make_synthetic_instance(seed=5, n_bikes=2, n_orders=4, H=24, tariff="tou")
+    assert tou.meta["tariff"]["name"] == "tou" and tou.meta["price_peak_hours"] == [8.0, 22.0]
+    assert set(tou.pi.values()) == {0.442}                                # 17:30-19:30 is peak
+    off = make_synthetic_instance(seed=5, n_bikes=2, n_orders=4, H=24, tariff="tou", window_start_hour=7.0,
+                                  round2=False)                         # 07:00-09:00, price peak from 08:00
+    j = off.facilities[0].id
+    assert off.price(j, 11) == 0.132 and off.price(j, 12) == 0.442
+    # explicit keys win over the tariff
+    mine = make_synthetic_instance(seed=5, n_bikes=2, n_orders=4, H=24, tariff="tou", costs={"pi_peak": 0.5},
+                                   facilities_spec={"price_peak_hours": (18.0, 19.0)})
+    assert mine.meta["price_peak_hours"] == [18.0, 19.0] and 0.5 in set(mine.pi.values())
+    with pytest.raises(KeyError):
+        make_synthetic_instance(seed=5, n_bikes=2, n_orders=4, H=24, energy_calibration="nope")
+
+
+def test_cyclic_tour_chain_property():
+    from ebike_swap_sim.generator import make_r5_instance
+    inst = make_synthetic_instance(seed=0, n_bikes=2, n_orders=4, H=48, services_spec={"mode": "cyclic"})
+    cyc = inst.meta["cyclic_services"]
+    first_tour = inst.services[:cyc["legs_per_tour"]]
+    assert [x.l for x in first_tour[1:]] == [x.u for x in first_tour[:-1]]
+    assert first_tour[-1].d_fac == first_tour[0].o_fac                 # the cycle closes
+    assert make_r5_instance("r5_stress4h", seed=0).services == []      # co-located r5 default: no services

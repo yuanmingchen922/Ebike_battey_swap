@@ -1,6 +1,8 @@
 """Schedule container, objective (26)-(32), constraint checker (5)-(22) and
 reporting metrics for E2 (``notes/extracted/E2.txt``; conventions in
-``notes/DECISIONS.md``).  Solver-independent: both the Gurobi solution
+``notes/DECISIONS.md``), plus the round-5 additions of ``notes/reading_to_model.md``:
+the A3 metric pack (:func:`metric_pack`, ``metrics()['r5']``) and the M1 end-state
+adjustment (:func:`end_state_adjustment`, ``cost()['C_end_adjust']``, never part of (26)).  Solver-independent: both the Gurobi solution
 (``ilp.py``) and the event-driven baseline (``baseline.py``) are converted to a
 :class:`Schedule` and priced / checked by the same code.
 
@@ -201,7 +203,8 @@ def reconstruct_inventory(inst: Instance, lib: ArcLibrary, x: Dict[Any, Iterable
 # ---------------------------------------------------------------------------
 # objective (26)-(32)
 # ---------------------------------------------------------------------------
-def cost(inst: Instance, lib: ArcLibrary, sched: Schedule) -> Dict[str, Any]:
+def cost(inst: Instance, lib: ArcLibrary, sched: Schedule, end_price: Optional[float] = None,
+         bike_term: str = "positive") -> Dict[str, Any]:
     """Objective (26) and its components, exactly as written:
 
     * ``C_setup`` (27) ``sum_j F_j y_j + bB_j B_j + bC_j C_j`` (a constant when
@@ -214,6 +217,14 @@ def cost(inst: Instance, lib: ArcLibrary, sched: Schedule) -> Dict[str, Any]:
     * ``C_reb`` (32) ``sum_e f_e h_e + sum_q v^reb_eq z_eq``;
     * ``total`` = (26).  ``C_dummy_terminal`` (penalised dummy terminal arcs, 0 in
       the written model) is listed separately and included in ``total``.
+
+    Plan item M1 adds three reporting lines that are NOT part of (26) and never
+    enter ``total``: ``C_end_adjust`` (end-state energy adjustment of
+    :func:`end_state_adjustment`, priced at ``pi_ref eps/eta`` per missing level;
+    ``end_price`` / ``bike_term`` are passed through), ``C_end_adjust_parts``
+    (station / bike split) and ``total_end_adjusted = total + C_end_adjust``, the
+    figure to use when an ILP and a baseline schedule (or two boundary variants) are
+    compared on equal end states.
     """
     y, B, C = facility_vars(inst, sched)
     disc = inst.disc
@@ -246,11 +257,121 @@ def cost(inst: Instance, lib: ArcLibrary, sched: Schedule) -> Dict[str, Any]:
             C_reb += inst.service(e).vreb_q(q) * val
     C_orders = unserved + response + lateness
     total = C_setup + C_elec + C_travel + C_orders + C_reb + dummy
+    adj = end_state_adjustment(inst, lib, sched, end_price=end_price, bike_term=bike_term)
     return {
         "C_setup": C_setup, "C_elec": C_elec, "C_travel": C_travel,
         "C_orders": C_orders,
         "C_orders_parts": {"unserved": unserved, "response": response, "lateness": lateness},
         "C_reb": C_reb, "C_dummy_terminal": dummy, "total": total,
+        # M1: reported next to (26), never part of it
+        "C_end_adjust": adj["C_end_adjust"],
+        "C_end_adjust_parts": {"station": adj["station_cost"], "bikes": adj["bike_cost"],
+                               "price": adj["price"], "station_levels": adj["station_levels"],
+                               "bike_levels": adj["bike_levels"]},
+        "total_end_adjusted": total + adj["C_end_adjust"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# M1: end-state energy adjustment (reported, not part of (26))
+# ---------------------------------------------------------------------------
+#: Accepted values of the ``bike_term`` argument of :func:`end_state_adjustment`.
+END_ADJUST_BIKE_TERMS = ("positive", "signed", "none")
+
+
+def end_reference_price(inst: Instance, end_price: Optional[float] = None) -> float:
+    """Reference price per purchased kWh of the M1 end-state adjustment.
+
+    ``end_price`` if given, else ``inst.meta['end_price']`` if set, else the mean of
+    the (28) prices ``pi_jt`` over ``j in C`` and ``t in T`` (equal to ``pi`` for a
+    flat price, which every round-1..4 cost variant uses); an instance without a
+    charge-capable facility falls back to the flat ``pi`` (or the mean of a price
+    dict).  Plan item M1; E2 (28)."""
+    if end_price is not None:
+        return float(end_price)
+    if inst.meta.get("end_price") is not None:
+        return float(inst.meta["end_price"])
+    cset = list(inst.Cset)
+    if cset and inst.H > 0:
+        vals = [inst.price(j, t) for j in cset for t in range(inst.H)]
+        return float(sum(vals) / len(vals))
+    if isinstance(inst.pi, dict):
+        return float(sum(inst.pi.values()) / len(inst.pi)) if inst.pi else 0.0
+    return float(inst.pi)
+
+
+def bike_end_levels(inst: Instance, lib: ArcLibrary, sched: Schedule) -> Dict[Any, int]:
+    """Battery level ``q_k(H)`` carried by each bike at the end of its path (the head of
+    its last non-terminal arc; ``q0_k`` for a bike without arcs).  Used by the M1
+    end-state adjustment and the A3 metric pack; E2 Section 3 states ``(v, t, q)``."""
+    out: Dict[Any, int] = {}
+    for b in inst.bikes:
+        q = int(b.q0)
+        for a in sched.path(b.id, lib):
+            if a.kind != "term":
+                q = int(a.dst[2])
+        out[b.id] = q
+    return out
+
+
+def end_state_adjustment(inst: Instance, lib: ArcLibrary, sched: Schedule,
+                         end_price: Optional[float] = None, bike_term: str = "positive",
+                         n: Optional[Dict[Tuple[Any, int, int], int]] = None) -> Dict[str, Any]:
+    """End-state energy adjustment of plan item M1 (``C_end_adjust``), NOT part of (26).
+
+    Values the energy that is missing at the horizon relative to the start, at the
+    purchase cost of recharging it, so that the ILP and the baseline (or two boundary
+    variants of :func:`experiments.common.boundary_grid`) are compared on equal end
+    states::
+
+        C_end_adjust = pi_ref (eps / eta) [ sum_j sum_q (L - q) (n_jqH - n_jq0)
+                                            + sum_k bike_term(q0_k - q_k(H)) ]
+
+    * station term: level deficit of the facility stock at ``H`` minus that at
+      ``t = 0`` (13), (16); with the all-full start (16) the second sum is zero and the
+      term is the plan's ``sum_j sum_q (L - q) n_jqH``.  No cargo is in transit at ``H``
+      (E2 p.6, (24)), so this covers every spare battery.
+    * bike term: ``'positive'`` (default, the plan's formula) charges
+      ``(q0_k - q_k(H))^+`` -- energy a bike ends with above its start level is not
+      credited, because the next window starts the bikes at their given ``q0`` (E2
+      p.9: bike batteries are given fleet resources); ``'signed'`` credits it
+      (pure energy balance); ``'none'`` drops it.
+    * ``pi_ref`` from :func:`end_reference_price`; ``eps / eta`` is the purchased
+      kWh per level, as in (28).
+
+    Zero whenever the end state equals the start state (every station at its initial
+    stock, every bike at ``q0``).  Returns ``{'C_end_adjust', 'station_cost',
+    'bike_cost', 'station_levels', 'bike_levels', 'bike_levels_signed', 'price',
+    'kwh_per_level', 'bike_term'}`` (``*_levels`` in charge levels)."""
+    if bike_term not in END_ADJUST_BIKE_TERMS:
+        raise ValueError(f"bike_term must be one of {END_ADJUST_BIKE_TERMS}, got {bike_term!r}")
+    H, L = inst.H, inst.L
+    _, B, _ = facility_vars(inst, sched)
+    if n is None:
+        n = sched.n
+    if n is None:
+        n = reconstruct_inventory(inst, lib, {k: sched.arc_ids(k) for k in sched.x}, sched.c, sched.z, B)
+    n0 = {(f.id, q): (int(B.get(f.id, 0)) if q == L else 0) for f in inst.facilities for q in range(L + 1)}
+    station_levels = 0
+    for f in inst.facilities:
+        for q in range(L + 1):
+            station_levels += (L - q) * (int(n.get((f.id, q, H), 0)) - n0[(f.id, q)])
+    q_end = bike_end_levels(inst, lib, sched)
+    signed = sum(int(b.q0) - q_end[b.id] for b in inst.bikes)
+    if bike_term == "positive":
+        bike_levels = sum(max(int(b.q0) - q_end[b.id], 0) for b in inst.bikes)
+    elif bike_term == "signed":
+        bike_levels = signed
+    else:
+        bike_levels = 0
+    price = end_reference_price(inst, end_price)
+    per_level = price * inst.disc.kwh_per_step
+    return {
+        "C_end_adjust": per_level * (station_levels + bike_levels),
+        "station_cost": per_level * station_levels, "bike_cost": per_level * bike_levels,
+        "station_levels": int(station_levels), "bike_levels": int(bike_levels),
+        "bike_levels_signed": int(signed), "price": price,
+        "kwh_per_level": inst.disc.kwh_per_step, "bike_term": bike_term,
     }
 
 
@@ -581,7 +702,8 @@ def metrics(inst: Instance, lib: ArcLibrary, sched: Schedule) -> Dict[str, Any]:
     ``stockout_slots`` (slots with ``n_jLt = 0`` at a swap site), ``wait_before_swap``
     (wait slots at the swap node immediately before each swap, a queue proxy),
     ``mean_wait_before_swap``, ``swaps_per_facility``, ``end_full_total``,
-    ``end_target_shortfall`` (18), ``per_platform`` served share, ``bike_end_levels``.
+    ``end_target_shortfall`` (18), ``per_platform`` served share, ``bike_end_levels``,
+    and ``r5``: the round-5 metric pack of plan item A3 (:func:`metric_pack`).
     """
     H, L = inst.H, inst.L
     disc = inst.disc
@@ -654,7 +776,9 @@ def metrics(inst: Instance, lib: ArcLibrary, sched: Schedule) -> Dict[str, Any]:
     stockout = {j: sum(1 for t in range(H) if full_stock[j][t] == 0) for j in inst.S}
     end_full = sum(full_stock[j][H] for j in inst.N)
     by_level = {q: sum(int(v) for (e, qq), v in sched.z.items() if qq == q) for q in range(L + 1)}
+    out_lock = _lockout_metrics(inst, sched, full_stock, stock, end_full)
     return {
+        **({"lockout": out_lock} if out_lock is not None else {}),
         "n_orders": n_orders, "n_served": n_served, "n_unserved": n_unserved,
         "served_share": (n_served / n_orders) if n_orders else 1.0,
         "mean_response_h": (sum(resp) / n_served) if n_served else 0.0,
@@ -681,4 +805,302 @@ def metrics(inst: Instance, lib: ArcLibrary, sched: Schedule) -> Dict[str, Any]:
                          for p in platform_tot},
         "bike_end_levels": end_levels,
         "facility_vars": {"y": y, "B": B, "C": C},
+        "r5": metric_pack(inst, lib, sched, n=n),
     }
+
+
+def _lockout_metrics(inst: Instance, sched: Schedule, full_stock: Dict[Any, List[int]],
+                     stock: Dict[Any, List[int]], end_full: int) -> Optional[Dict[str, Any]]:
+    """Lock-out view of the stock metrics (plan item M9; ``meta['lockout']['sink']`` of
+    ``generator.add_battery_lockout``).  E2 (18) as written sums over all facilities and so
+    counts batteries locked at the dummy sink; the keys here exclude the sink and the forced
+    services so that recovery and transfer metrics describe the real network.  ``None``
+    when the instance has no lock-out sink (the ``metrics`` dict is then unchanged)."""
+    lk = inst.meta.get("lockout") or {}
+    sink = lk.get("sink")
+    if sink is None or sink not in full_stock:
+        return None
+    forced = {rec["service"] for rec in (inst.options.get("forced_transfers") or [])}
+    real_N = [j for j in inst.N if j != sink]
+    end_full_real = sum(full_stock[j][inst.H] for j in real_N)
+    B_real = sum(int(inst.facility(j).B or 0) for j in real_N)
+    return {
+        "sink": sink,
+        "locked_batteries": stock[sink][inst.H],
+        "locked_full_at_H": full_stock[sink][inst.H],
+        "forced_executed": sum(int(sched.h.get(e, 0)) for e in forced),
+        "forced_total": len(forced),
+        "end_full_total_excl_sink": end_full_real,
+        "end_share_excl_sink": (end_full_real / B_real) if B_real else None,
+        "transfers_used_excl_forced": sum(int(v) for e, v in sched.h.items() if e not in forced),
+        "batteries_moved_excl_forced": sum(int(v) for (e, _q), v in sched.z.items() if e not in forced),
+        "end_full_total_incl_sink": end_full,
+    }
+
+
+# ---------------------------------------------------------------------------
+# A3: round-5 metric pack (computed from any Schedule, no re-solve)
+# ---------------------------------------------------------------------------
+def metric_pack(inst: Instance, lib: ArcLibrary, sched: Schedule,
+                n: Optional[Dict[Tuple[Any, int, int], int]] = None) -> Dict[str, Any]:
+    """Round-5 metric pack of plan item A3, computed from any :class:`Schedule` (ILP or
+    baseline) and the shared arc library only -- no solver, no policy flags, so the
+    two methods are measured by exactly the same code.  E2 references: swaps (12),
+    stock (13)/(16), availability (14), storage (15), charging (19)-(21), swap
+    positions (22), objective prices (28).
+
+    Station side (IJCAI-25 Def. 1-2):
+
+    * ``sbur`` ``{j: S_j / B_j}`` -- station battery utilisation, full batteries issued
+      over the horizon per initial spare, for open swap sites with ``B_j > 0``
+      (``None`` when ``B_j = 0``); ``min_sbur`` over those sites;
+      ``swaps_per_storage_slot`` ``{j: S_j / K_j}``.
+    * ``bsr`` -- battery supply ratio, share of swaps the bike started without any
+      wait slot at the station immediately before it ('met without wait');
+      ``bsr_unblocked`` -- share of swaps none of whose preceding wait slots was
+      *blocked*, i.e. a slot ``t`` with no issuable full battery
+      (``n_jLt - S_jt - D_jLt <= 0``, (14)) or all positions busy (``>= M_j y_j``,
+      (22)); ``n_blocked_wait_slots``, ``n_stockout_wait_slots``. ``None`` without swaps.
+    * ``swaps_per_slot`` (length ``H``, swap starts per slot) and
+      ``swaps_per_slot_facility``.
+    * ``batteries_saved`` ``{j: k_j}`` and ``batteries_saved_total`` /
+      ``batteries_saved_share`` -- the largest number of initial spares at ``j`` that
+      could be removed at ``t = 0`` without changing any decision of the schedule:
+      ``k_j = min(B_j, min_{t<H}(n_jLt - S_jt - D_jLt), n_jLH)`` (exact for (14)-(16);
+      the end targets (17)-(18) are ignored -- they are reported separately).
+
+    Rider side (IJCAI-15 Eq. 3/7, eBaaS Sec. 2.4):
+
+    * ``station_time_min`` per swap = (wait slots at the station before the swap +
+      swap duration ``u_a - l_a``) x Delta, in minutes; ``mean_station_time_min``,
+      ``max_station_time_min``; ``mean_wait_min_per_swap``; ``mean_detour_km_per_swap``
+      / ``mean_detour_min_per_swap`` (the reposition arc that brought the bike to the
+      station, 0 when it arrived with a delivery or started there).
+    * outage / stranding: ``reserve_breach_bikes`` (bikes whose path visits a level
+      ``q < q_res``, (9)), ``stranded_bikes`` (no real terminal arc: missing or dummy,
+      (9)), ``energy_refused_orders`` / ``energy_refused_bikes`` (an unserved order for
+      which one of the bike's own delivery arcs leaves a node ``(v, t, q')`` while the
+      bike waits idle at ``(v, t, q)`` with ``q < q'``: it was in place and free but
+      lacked the energy (4); a proxy, limited to arcs present in the library),
+      ``outage_bikes`` (union of the three) and ``outage_rate`` = ``|outage_bikes| /
+      |K|`` (one window = one bike-window).
+    * ``empty_km`` (reposition arcs), ``delivery_km``, ``empty_km_per_bike_hour`` =
+      ``empty_km / (|K| H Delta)``, ``empty_km_share``.
+
+    Grid side (ITSC-21 Table II, Fig. 3):
+
+    * ``peak_kw_network`` = ``max_t p_ch sum_{j in C} sum_q c_jqt`` (19)-(21),
+      ``peak_kw_facility``; ``kwh_by_price`` ``{price: kWh purchased}`` where a price
+      period is the set of (site, slot) pairs with the same ``pi_jt`` (28) (one key for
+      a flat price), ``peak_kw_by_price`` the peak network load within each period.
+    * ``batteries_end_levels_missing`` and ``bike_end_levels`` (M1 end state).
+    """
+    H, L = inst.H, inst.L
+    disc = inst.disc
+    Delta = disc.Delta_h
+    y, B, C = facility_vars(inst, sched)
+    if n is None:
+        n = sched.n
+    if n is None:
+        n = reconstruct_inventory(inst, lib, {k: sched.arc_ids(k) for k in sched.x}, sched.c, sched.z, B)
+    s, S = swap_counts(inst, lib, {k: sched.arc_ids(k) for k in sched.x})
+    D, _A = transfer_counts(inst, sched.z)
+    swap_ids = [j for j in inst.S]
+    # ----------------------------------------------- swap occupancy (22) and profile
+    busy: Dict[Any, List[int]] = {j: [0] * H for j in swap_ids}
+    swaps_slot = [0] * H
+    swaps_slot_fac: Dict[Any, List[int]] = {j: [0] * H for j in swap_ids}
+    swaps_fac: Dict[Any, int] = {j: 0 for j in swap_ids}
+    paths = {b.id: sched.path(b.id, lib) for b in inst.bikes}
+    for arcs in paths.values():
+        for a in arcs:
+            if a.kind != "swap":
+                continue
+            if 0 <= a.l < H:
+                swaps_slot[a.l] += 1
+                swaps_slot_fac.setdefault(a.fac, [0] * H)[a.l] += 1
+            swaps_fac[a.fac] = swaps_fac.get(a.fac, 0) + 1
+            for tau in range(max(a.l, 0), min(a.u, H)):
+                busy.setdefault(a.fac, [0] * H)[tau] += 1
+
+    def issuable(j: Any, t: int) -> int:
+        return int(n.get((j, L, t), 0)) - int(S.get((j, t), 0)) - int(D.get((j, L, t), 0))
+
+    # ------------------------------------------------------ unserved-order index (4)
+    unserved = [o.id for o in inst.orders if int(sched.u.get(o.id, 0))]
+    need: Dict[Tuple[Any, Any, int], Dict[Any, int]] = defaultdict(dict)
+    for i in unserved:
+        for a in lib.delivery_arcs(i):
+            key = (a.k, a.src[0], a.src[1])
+            prev = need[key].get(i)
+            if prev is None or a.src[2] < prev:
+                need[key][i] = int(a.src[2])
+    # ---------------------------------------------------------------- per-bike pass
+    station_time: List[float] = []
+    wait_min: List[float] = []
+    detour_km: List[float] = []
+    detour_min: List[float] = []
+    n_no_wait = n_unblocked = 0
+    n_blocked_slots = n_stockout_slots = 0
+    empty_km = deliv_km = 0.0
+    reserve_breach: List[Any] = []
+    stranded: List[Any] = []
+    refused_orders: set = set()
+    refused_bikes: List[Any] = []
+    q_res = int(inst.q_res)
+    for b in inst.bikes:
+        k = b.id
+        arcs = paths[k]
+        min_q = int(b.q0)
+        trailing_waits: List[int] = []
+        prev_arc: Optional[Arc] = None
+        has_real_term = False
+        bike_refused = False
+        for a in arcs:
+            if a.kind == "term":
+                if a.fac is not None:
+                    has_real_term = True
+                continue
+            min_q = min(min_q, int(a.src[2]), int(a.dst[2]))
+            if a.kind == "move":
+                empty_km += a.d_km
+            elif a.kind == "deliver":
+                deliv_km += a.d_km
+            if a.kind == "wait":
+                if need:
+                    for i, q_need in need.get((k, a.src[0], a.src[1]), {}).items():
+                        if a.src[2] < q_need:
+                            refused_orders.add(i)
+                            bike_refused = True
+                trailing_waits.append(a.l)
+                continue
+            if a.kind == "swap":
+                j = a.fac
+                f = inst.facility(j)
+                n_wait = len(trailing_waits)
+                blocked = 0
+                for t in trailing_waits:
+                    stock_out = issuable(j, t) <= 0
+                    full_pos = busy.get(j, [0] * H)[t] >= f.M * y.get(j, 0) if 0 <= t < H else False
+                    if stock_out:
+                        n_stockout_slots += 1
+                    if stock_out or full_pos:
+                        blocked += 1
+                n_blocked_slots += blocked
+                n_no_wait += int(n_wait == 0)
+                n_unblocked += int(blocked == 0)
+                station_time.append((n_wait + (a.u - a.l)) * Delta * 60.0)
+                wait_min.append(n_wait * Delta * 60.0)
+                if prev_arc is not None and prev_arc.kind == "move":
+                    detour_km.append(prev_arc.d_km)
+                    detour_min.append((prev_arc.u - prev_arc.l) * Delta * 60.0)
+                else:
+                    detour_km.append(0.0)
+                    detour_min.append(0.0)
+            trailing_waits = []
+            prev_arc = a
+        if min_q < q_res:
+            reserve_breach.append(k)
+        if not has_real_term:
+            stranded.append(k)
+        if bike_refused:
+            refused_bikes.append(k)
+    flagged = set(reserve_breach) | set(stranded) | set(refused_bikes)
+    outage = [b.id for b in inst.bikes if b.id in flagged]
+    n_sw = len(station_time)
+    # ------------------------------------------------------------------ station side
+    sbur: Dict[Any, Optional[float]] = {}
+    for j in swap_ids:
+        if not y.get(j, 0):
+            continue
+        sbur[j] = (swaps_fac.get(j, 0) / B[j]) if B.get(j, 0) > 0 else None
+    sbur_vals = [v for v in sbur.values() if v is not None]
+    per_slot_k = {j: (swaps_fac.get(j, 0) / inst.facility(j).K) for j in swap_ids
+                  if y.get(j, 0) and inst.facility(j).K > 0}
+    saved: Dict[Any, int] = {}
+    for f in inst.facilities:
+        j = f.id
+        if B.get(j, 0) <= 0:
+            continue
+        slack = min([issuable(j, t) for t in range(H)] + [int(n.get((j, L, H), 0)), int(B[j])])
+        saved[j] = max(0, int(slack))
+    total_B = sum(B.values())
+    saved_total = sum(saved.values())
+    # ---------------------------------------------------------------------- grid side
+    p_ch = disc.p_ch_kw
+    charge_ids = set(inst.Cset)
+    load_t = [0.0] * H
+    kwh_price: Dict[str, float] = defaultdict(float)
+    load_price: Dict[str, List[float]] = {}
+    peak_fac: Dict[Any, float] = {}
+    fac_t: Dict[Any, List[int]] = {j: [0] * H for j in charge_ids}
+    for (j, q, t), val in sched.c.items():
+        if not val or j not in charge_ids or not (0 <= q < L) or not (0 <= t < H):
+            continue
+        fac_t[j][t] += int(val)
+        load_t[t] += p_ch * val
+        key = f"{inst.price(j, t):g}"
+        kwh_price[key] += disc.kwh_per_step * val
+        load_price.setdefault(key, [0.0] * H)[t] += p_ch * val
+    for j, per_t in fac_t.items():
+        peak_fac[j] = p_ch * max(per_t) if per_t else 0.0
+    adj = end_state_adjustment(inst, lib, sched, n=n)
+    q_end = bike_end_levels(inst, lib, sched)
+    km_hours = len(inst.bikes) * H * Delta
+
+    def mean(v: List[float]) -> Optional[float]:
+        return (sum(v) / len(v)) if v else None
+
+    return {
+        # station side
+        "sbur": sbur, "min_sbur": (min(sbur_vals) if sbur_vals else None),
+        "mean_sbur": mean(sbur_vals),
+        "swaps_per_storage_slot": per_slot_k,
+        "n_swaps": n_sw,
+        "bsr": (n_no_wait / n_sw) if n_sw else None,
+        "bsr_unblocked": (n_unblocked / n_sw) if n_sw else None,
+        "n_blocked_wait_slots": n_blocked_slots, "n_stockout_wait_slots": n_stockout_slots,
+        "swaps_per_slot": swaps_slot, "swaps_per_slot_facility": swaps_slot_fac,
+        "peak_swaps_per_slot": max(swaps_slot) if swaps_slot else 0,
+        "batteries_saved": saved, "batteries_saved_total": saved_total,
+        "batteries_saved_share": (saved_total / total_B) if total_B else None,
+        # rider side
+        "station_time_min": station_time,
+        "mean_station_time_min": mean(station_time),
+        "max_station_time_min": max(station_time) if station_time else None,
+        "mean_wait_min_per_swap": mean(wait_min),
+        "mean_detour_km_per_swap": mean(detour_km),
+        "mean_detour_min_per_swap": mean(detour_min),
+        "reserve_breach_bikes": reserve_breach, "stranded_bikes": stranded,
+        "energy_refused_orders": sorted(refused_orders, key=str), "energy_refused_bikes": refused_bikes,
+        "n_energy_refused_orders": len(refused_orders),
+        "outage_bikes": outage, "n_outage_bikes": len(outage),
+        "outage_rate": (len(outage) / len(inst.bikes)) if inst.bikes else 0.0,
+        "empty_km": empty_km, "delivery_km": deliv_km,
+        "empty_km_per_bike_hour": (empty_km / km_hours) if km_hours > 0 else 0.0,
+        "empty_km_share": (empty_km / (empty_km + deliv_km)) if (empty_km + deliv_km) > 0 else 0.0,
+        # grid side
+        "peak_kw_network": max(load_t) if load_t else 0.0,
+        "peak_kw_facility": peak_fac,
+        "kwh_by_price": dict(kwh_price),
+        "peak_kw_by_price": {key: max(v) for key, v in load_price.items()},
+        "kwh_purchased": sum(kwh_price.values()),
+        # M1 end state
+        "station_end_levels_missing": adj["station_levels"],
+        "bike_end_levels_missing": adj["bike_levels"],
+        "bike_end_levels": q_end,
+        "C_end_adjust": adj["C_end_adjust"],
+    }
+
+
+#: Scalar entries of :func:`metric_pack` copied into flat experiment records
+#: (``experiments.common.flatten_r5``).
+R5_SCALAR_KEYS = (
+    "min_sbur", "mean_sbur", "n_swaps", "bsr", "bsr_unblocked", "n_blocked_wait_slots",
+    "n_stockout_wait_slots", "peak_swaps_per_slot", "batteries_saved_total", "batteries_saved_share",
+    "mean_station_time_min", "max_station_time_min", "mean_wait_min_per_swap",
+    "mean_detour_km_per_swap", "mean_detour_min_per_swap", "n_energy_refused_orders",
+    "n_outage_bikes", "outage_rate", "empty_km", "delivery_km", "empty_km_per_bike_hour",
+    "empty_km_share", "peak_kw_network", "kwh_purchased", "station_end_levels_missing",
+    "bike_end_levels_missing", "C_end_adjust",
+)

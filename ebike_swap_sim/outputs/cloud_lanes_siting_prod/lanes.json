@@ -1,0 +1,345 @@
+{
+ "lanes": [
+  {
+   "name": "b0_gate",
+   "batch": 1,
+   "threads": 1,
+   "after": "-",
+   "command": "R7_BATCH=1 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_gate.py",
+   "hours": 0.0,
+   "stage": "gate"
+  },
+  {
+   "name": "b1_calib",
+   "batch": 1,
+   "threads": 12,
+   "after": "b0_gate",
+   "command": "R7_BATCH=1 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage calib --wall 1.5 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 0.7,
+   "stage": "P"
+  },
+  {
+   "name": "b1_feas_1",
+   "batch": 1,
+   "threads": 1,
+   "after": "b1_calib",
+   "command": "R7_BATCH=1 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage feas --feas-scenarios 0 2 4 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 1 --threads 1 --max-threads 1 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.4,
+   "stage": "A"
+  },
+  {
+   "name": "b1_feas_2",
+   "batch": 1,
+   "threads": 1,
+   "after": "b1_calib",
+   "command": "R7_BATCH=1 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage feas --feas-scenarios 1 3 5 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 1 --threads 1 --max-threads 1 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.4,
+   "stage": "A"
+  },
+  {
+   "name": "b1_feas_3",
+   "batch": 1,
+   "threads": 1,
+   "after": "b1_calib",
+   "command": "R7_BATCH=1 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage feas --feas-scenarios 6 8 10 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 1 --threads 1 --max-threads 1 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.4,
+   "stage": "A"
+  },
+  {
+   "name": "b1_feas_4",
+   "batch": 1,
+   "threads": 1,
+   "after": "b1_calib",
+   "command": "R7_BATCH=1 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage feas --feas-scenarios 7 9 11 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 1 --threads 1 --max-threads 1 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.4,
+   "stage": "A"
+  },
+  {
+   "name": "b1_oos_feas",
+   "batch": 1,
+   "threads": 1,
+   "after": "b1_feas_1,b1_feas_2,b1_feas_3,b1_feas_4",
+   "command": "R7_BATCH=1 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage oos-feas --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 1 --threads 1 --max-threads 1 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot --held-out",
+   "hours": 0.3,
+   "stage": "A (held-out)"
+  },
+  {
+   "name": "b2_m1",
+   "batch": 2,
+   "threads": 12,
+   "after": "b1_oos_feas,b1_feas_1,b1_feas_2,b1_feas_3,b1_feas_4",
+   "command": "R7_BATCH=2 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage m1 --wall-m1 13 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 12.3,
+   "stage": "B + C"
+  },
+  {
+   "name": "b3_rootlp_s04",
+   "batch": 3,
+   "threads": 4,
+   "after": "b2_m1",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 4 --root-import outputs/r7_siting_probe/dot_Nall_S12/cuts.jsonl --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s05",
+   "batch": 3,
+   "threads": 4,
+   "after": "b2_m1",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 5 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s10",
+   "batch": 3,
+   "threads": 4,
+   "after": "b2_m1",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 10 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s11",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s04",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 11 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s02",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s05",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 2 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s03",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s10",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 3 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s08",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s11",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 8 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s09",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s02",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 9 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s00",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s03",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 0 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s01",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s08",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 1 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s06",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s09",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 6 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b3_rootlp_s07",
+   "batch": 3,
+   "threads": 4,
+   "after": "b3_rootlp_s00",
+   "command": "R7_BATCH=3 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage rootlp --root-scenarios 7 --lp-workers 1 --lp-threads 4 --master-threads 1 --price-workers 1 --threads 1 --max-threads 4 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.98,
+   "stage": "D"
+  },
+  {
+   "name": "b4_pairs",
+   "batch": 4,
+   "threads": 12,
+   "after": "b3_rootlp_s01,b3_rootlp_s06,b3_rootlp_s07",
+   "command": "R7_BATCH=4 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage pairs --wall 5 --pair-seeds D30+D38 D09+D38 --pair-screens 16 --pair-price 4 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 4.0,
+   "stage": "E"
+  },
+  {
+   "name": "b4_m3",
+   "batch": 4,
+   "threads": 12,
+   "after": "b4_pairs",
+   "command": "R7_BATCH=4 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage m3 --wall 2 --m3-thirds 2 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 1.3,
+   "stage": "F"
+  },
+  {
+   "name": "b4_roles",
+   "batch": 4,
+   "threads": 12,
+   "after": "b4_m3",
+   "command": "R7_BATCH=4 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage roles --wall 3.5 --hub-scenarios 3 --role-hub-price 2 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.7,
+   "stage": "H"
+  },
+  {
+   "name": "b5_comparison",
+   "batch": 5,
+   "threads": 12,
+   "after": "b4_roles",
+   "command": "R7_BATCH=5 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage comparison --wall-comparison 4 --comparison-rules CSCD@1,2,3 CSAV@2 dot_all_pilot dot_pilot_proxy@2 --comparison-time-limits 2:600 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.6,
+   "stage": "G"
+  },
+  {
+   "name": "b5_restricted",
+   "batch": 5,
+   "threads": 12,
+   "after": "b5_comparison",
+   "command": "R7_BATCH=5 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage restricted --wall-restricted 1 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 0.7,
+   "stage": "G (DOT-only)"
+  },
+  {
+   "name": "b5_oos",
+   "batch": 5,
+   "threads": 12,
+   "after": "b5_restricted",
+   "command": "R7_BATCH=5 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage oos --wall 2 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot --held-out",
+   "hours": 1.5,
+   "stage": "I"
+  },
+  {
+   "name": "b6_noradius",
+   "batch": 6,
+   "threads": 9,
+   "after": "b5_oos",
+   "command": "R7_BATCH=6 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage noradius --wall 5 --noradius-group 4 --lp-workers 3 --lp-threads 2 --master-threads 2 --price-workers 3 --threads 3 --max-threads 9 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 3.3,
+   "stage": "R"
+  }
+ ],
+ "batches": [
+  {
+   "batch": 1,
+   "stages": "P + A",
+   "hours": 3.8,
+   "usd": 4.02,
+   "lanes": [
+    "b0_gate",
+    "b1_calib",
+    "b1_feas_1",
+    "b1_feas_2",
+    "b1_feas_3",
+    "b1_feas_4",
+    "b1_oos_feas"
+   ]
+  },
+  {
+   "batch": 2,
+   "stages": "B + C",
+   "hours": 13.9,
+   "usd": 14.71,
+   "lanes": [
+    "b2_m1"
+   ]
+  },
+  {
+   "batch": 3,
+   "stages": "D",
+   "hours": 13.5,
+   "usd": 14.29,
+   "lanes": [
+    "b3_rootlp_s04",
+    "b3_rootlp_s05",
+    "b3_rootlp_s10",
+    "b3_rootlp_s11",
+    "b3_rootlp_s02",
+    "b3_rootlp_s03",
+    "b3_rootlp_s08",
+    "b3_rootlp_s09",
+    "b3_rootlp_s00",
+    "b3_rootlp_s01",
+    "b3_rootlp_s06",
+    "b3_rootlp_s07"
+   ]
+  },
+  {
+   "batch": 4,
+   "stages": "E + F + H",
+   "hours": 9.2,
+   "usd": 9.74,
+   "lanes": [
+    "b4_pairs",
+    "b4_m3",
+    "b4_roles"
+   ]
+  },
+  {
+   "batch": 5,
+   "stages": "G + I",
+   "hours": 5.6,
+   "usd": 5.93,
+   "lanes": [
+    "b5_comparison",
+    "b5_restricted",
+    "b5_oos"
+   ]
+  },
+  {
+   "batch": 6,
+   "stages": "R",
+   "hours": 4.0,
+   "usd": 4.23,
+   "lanes": [
+    "b6_noradius"
+   ]
+  }
+ ],
+ "instance": "r7i.4xlarge",
+ "usd_per_h": 1.0584,
+ "usable_threads": 12,
+ "max_rss_gb": 110.0,
+ "out_dir": "outputs/r7_siting",
+ "total_hours": 50.0,
+ "total_usd": 52.92,
+ "root_order": [
+  4,
+  5,
+  10,
+  11,
+  2,
+  3,
+  8,
+  9,
+  0,
+  1,
+  6,
+  7
+ ]
+}

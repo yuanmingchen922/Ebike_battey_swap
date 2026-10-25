@@ -1,0 +1,252 @@
+{
+ "plan": "notes/siting_production_replan_m1.md + critic K1-K7",
+ "lanes": [
+  {
+   "name": "r2_gate",
+   "batch": "2b",
+   "threads": 1,
+   "after": "-",
+   "command": "R7_BATCH=2b R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_gate.py --cost-dir outputs/r7_siting",
+   "hours": 0.0,
+   "range": [
+    0.0,
+    0.0
+   ],
+   "step": "gate (markers of changes 1-9)"
+  },
+  {
+   "name": "r2_m1_ub",
+   "batch": "2b",
+   "threads": 12,
+   "after": "r2_gate",
+   "command": "R7_BATCH=2b R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage price-list --evaluator in --tier open_sites --layouts m1-lp-order --lp-order-below 1075 --extend-below-ub on --extend-max 24 --cover-rows off --time-limit 600 --wall 6 --lp-workers 1 --lp-threads 1 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 3.3,
+   "range": [
+    2.0,
+    6.5
+   ],
+   "step": "M1 + M1-rest (open_sites UB pass in LP order)"
+  },
+  {
+   "name": "r2_m4",
+   "batch": "2b",
+   "threads": 12,
+   "after": "r2_m1_ub",
+   "command": "R7_BATCH=2b R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage m1 --m1-pass2 off --max-escalations 0 --wall-m1 1.5 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 1 --threads 1 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 0.5,
+   "range": [
+    0.4,
+    0.6
+   ],
+   "step": "M4 m1 resume without pricing (official m = 1 bound pair)"
+  },
+  {
+   "name": "r2_m6",
+   "batch": "2b",
+   "threads": 3,
+   "after": "r2_m4",
+   "command": "R7_BATCH=2b R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage ub-check --layouts best@m1 --max-templates 2 --wall 1 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 1 --threads 1 --max-threads 3 --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 0.2,
+   "range": [
+    0.15,
+    0.3
+   ],
+   "step": "M6 UB validity check (mandatory, K3.5)"
+  },
+  {
+   "name": "r2_m3probe_a",
+   "batch": "2b",
+   "threads": 8,
+   "after": "r2_m6",
+   "command": "R7_BATCH=2b R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage price-list --evaluator in --tier all_candidates --layouts D29:SC:B3:C2 --cells D29:5 D29:2 --warm-tier open_sites --cover-rows off --time-limit 1200 --wall 1 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 2 --threads 4 --max-threads 8 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 0.43,
+   "range": [
+    0.35,
+    0.55
+   ],
+   "step": "M3 bound probe, variant a (default params, 2 x 4, K3.6; side branch)"
+  },
+  {
+   "name": "r2_m3probe_b",
+   "batch": "2b",
+   "threads": 8,
+   "after": "r2_m6",
+   "command": "R7_BATCH=2b R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage price-list --evaluator in --tier all_candidates --layouts D29:SC:B3:C2 --cells D29:5 D29:2 --warm-tier open_sites --ilp-params Method=2 --cover-rows off --time-limit 1200 --wall 1 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 2 --threads 4 --max-threads 8 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 0.43,
+   "range": [
+    0.35,
+    0.55
+   ],
+   "step": "M3 bound probe, variant b (Method 2; side branch; its probe_summary record gives the Tier 2 verdict)"
+  },
+  {
+   "name": "r2_b4_pairs",
+   "batch": "4",
+   "threads": 12,
+   "after": "r2_m6",
+   "command": "R7_BATCH=4 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage pairs --price-tier open_sites --time-limit 600 --time-limit-many-sites 5:900 --wall 4 --pair-seeds D30+D38 D09+D38 --pair-screens 16 --pair-price 4 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 3.7,
+   "range": [
+    3.1,
+    4.6
+   ],
+   "step": "E (pairs: screens unchanged, pricing open_sites)"
+  },
+  {
+   "name": "r2_b4_m3",
+   "batch": "4",
+   "threads": 12,
+   "after": "r2_b4_pairs",
+   "command": "R7_BATCH=4 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage m3 --price-tier open_sites --time-limit 600 --time-limit-many-sites 5:900 --wall 1 --m3-thirds 2 --cover-rows off --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 0.6,
+   "range": [
+    0.4,
+    0.9
+   ],
+   "step": "F (m = 3; no cover rows: pricing only, --m3-screen 0)"
+  },
+  {
+   "name": "r2_b4_roles",
+   "batch": "4",
+   "threads": 12,
+   "after": "r2_b4_m3",
+   "command": "R7_BATCH=4 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage roles --price-tier open_sites --time-limit 600 --time-limit-many-sites 5:900 --wall 2.5 --hub-scenarios 3 --role-hub-price 2 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 2.5,
+   "range": [
+    2.0,
+    3.2
+   ],
+   "step": "H (role table)"
+  },
+  {
+   "name": "r2_b5_comparison",
+   "batch": "5",
+   "threads": 12,
+   "after": "r2_b4_roles",
+   "command": "R7_BATCH=5 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage comparison --price-tier open_sites --time-limit 600 --time-limit-many-sites 5:900 --wall-comparison 2 --comparison-rules CSCD@1,2,3 CSAV@2 dot_all_pilot dot_pilot_proxy@2 --comparison-time-limits 2:600 --cover-rows off --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 1.3,
+   "range": [
+    1.0,
+    1.9
+   ],
+   "step": "G (comparison; no cover rows: pricing only)"
+  },
+  {
+   "name": "r2_b5_restricted",
+   "batch": "5",
+   "threads": 12,
+   "after": "r2_b5_comparison",
+   "command": "R7_BATCH=5 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage restricted --price-tier open_sites --time-limit 600 --time-limit-many-sites 5:900 --wall-restricted 1 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 1.0,
+   "range": [
+    0.7,
+    1.4
+   ],
+   "step": "G (DOT-only; cover rows kept for the restricted master bound)"
+  },
+  {
+   "name": "r2_b5_oos",
+   "batch": "5",
+   "threads": 12,
+   "after": "r2_b5_restricted",
+   "command": "R7_BATCH=5 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage oos --price-tier open_sites --time-limit 600 --time-limit-many-sites 5:900 --wall 1 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot --held-out",
+   "hours": 0.9,
+   "range": [
+    0.7,
+    1.3
+   ],
+   "step": "I (out of sample)"
+  },
+  {
+   "name": "r2_b6_noradius",
+   "batch": "6",
+   "threads": 12,
+   "after": "r2_b5_oos",
+   "command": "R7_BATCH=6 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage noradius --price-tier open_sites --time-limit 600 --time-limit-many-sites 5:900 --wall 2 --noradius-group 4 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 4 --threads 3 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot",
+   "hours": 1.5,
+   "range": [
+    1.2,
+    2.4
+   ],
+   "step": "R (radius effect, open_sites with and without the radius)"
+  }
+ ],
+ "batches": [
+  {
+   "batch": "2b",
+   "lanes": [
+    "r2_gate",
+    "r2_m1_ub",
+    "r2_m4",
+    "r2_m6",
+    "r2_m3probe_a",
+    "r2_m3probe_b"
+   ],
+   "hours": 4.86,
+   "usd": 5.14,
+   "range_h": [
+    3.25,
+    8.5
+   ]
+  },
+  {
+   "batch": "4",
+   "lanes": [
+    "r2_b4_pairs",
+    "r2_b4_m3",
+    "r2_b4_roles"
+   ],
+   "hours": 7.4,
+   "usd": 7.83,
+   "range_h": [
+    6.1,
+    9.3
+   ]
+  },
+  {
+   "batch": "5",
+   "lanes": [
+    "r2_b5_comparison",
+    "r2_b5_restricted",
+    "r2_b5_oos"
+   ],
+   "hours": 3.5,
+   "usd": 3.7,
+   "range_h": [
+    2.7,
+    4.9
+   ]
+  },
+  {
+   "batch": "6",
+   "lanes": [
+    "r2_b6_noradius"
+   ],
+   "hours": 1.7,
+   "usd": 1.8,
+   "range_h": [
+    1.4,
+    2.6
+   ]
+  }
+ ],
+ "contingency_h": {
+  "4": 0.6,
+  "5": 0.3,
+  "6": 0.2
+ },
+ "instance": "r7i.4xlarge",
+ "usd_per_h": 1.0584,
+ "usable_threads": 12,
+ "max_rss_gb": 110.0,
+ "out_dir": "outputs/r7_siting",
+ "tol_rel": 0.01,
+ "total_hours": 17.46,
+ "total_usd": 18.48,
+ "range_hours": [
+  13.45,
+  25.3
+ ],
+ "tier2_hours": 3.7,
+ "tier2_usd": 3.92
+}

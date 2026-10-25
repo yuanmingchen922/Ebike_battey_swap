@@ -1,329 +1,374 @@
-# E-bike battery swapping for food delivery in New York City
+# Where to place e-bike battery-swapping stations in Manhattan
 
-## 1. What this project is
+New York City is moving delivery e-bike charging out of homes. It must decide where public battery-swapping and
+charging stations should go. Delivery platforms do not share trip data. So this repository builds a simulator of
+e-bike battery swapping from **public data only** and uses it to choose station sites, roles and sizes in
+Manhattan south of 110th Street. Every answer comes with a **lower bound**, so we know how far it can be from the
+best possible layout.
 
-Food-delivery riders in New York City ride electric bikes. When a battery runs low the rider goes to a station and swaps it for a full one. The station then charges the empty battery, and sometimes a shuttle moves batteries between stations.
+A paper on this work is in preparation.
 
-We built a computer model that plans all of this at once for a whole evening: which rider takes which order, when each rider swaps, when each station charges, and when batteries are shipped between stations. The model picks the plan with the lowest total cost (customer waiting, late deliveries, dropped orders, electricity, riding, shuttles, station rent). We then compared this coordinated plan with a simple "nearest rider takes the order, swap when low" rule, on the same orders and the same bikes, to measure how much coordination is worth.
+**Short answer.** One station: put it in the corridor between 13th and 54th Street. DOT's proposed Site 34
+(2nd Ave & E 13th St) is best. Two stations cut the daily cost by a third. Swap and charge at the same site.
+Rule-based layouts and the 2024 DOT pilot pair cost 92-141 USD per day more.
 
-**Headline (final, round 3):** over 30 synthetic Manhattan-like evenings the coordinated plan is 29.6 % cheaper than the simple rule (95 % confidence interval +/- 5.6 points) and cheaper on every single evening; on 10 evenings built from real Midtown restaurant and census data it is 31.8 % cheaper (+/- 8.2). Almost all of the saving is punctuality: the simple rule delivers 16-18 orders late per evening, the coordinated plan 1-2. Spare batteries, chargers and shuttles turn out to matter very little at this scale; the plan itself is what matters.
+![Where the stations go](docs/figs/fig_map.png)
 
-**Round 4 (2026-10-14) asks where the stations should go.** A two-level planner that chooses station corners, kinds and sizes among 12 Midtown candidates under an investment budget, pricing every candidate layout by running the coordinated plan on several demand days, picks the same answer at every budget from 52,000 to 209,000 USD: one combined swap-and-charge station at a busy restaurant corner near W 29th St and 6th Ave with 3-4 spare batteries and 2 chargers, about 654 USD per 4-hour window and 85 % of orders served, because a second station of any kind costs 12-29 USD per window in fixed cost and saves at most about 1 USD of operations (Section 6.7).
+## 1. Method
 
-## 2. What is in this repository
+### 1.1 The question
 
-| Folder / file | What it is, in plain words | When to open it |
+A planner has a budget in units of 52,150 USD. One unit buys one swap-and-charge site with 3 spare batteries and
+2 chargers. For each budget the planner picks:
+
+* **sites** from 59 candidates (45 from public records, 14 restaurant-dense grid cells);
+* a **role** per site: swap-and-charge (SC), swap-only cabinet (S) or charging hub (C);
+* a **size** per site: an SC site has $`B \in \{2,3,4\}`$ spare batteries and $`C \in \{1,2\}`$ chargers;
+  a swap-only cabinet $`B \in \{2,3\}`$; a hub $`C \in \{2,4\}`$ (hubs only at 12 places).
+
+A layout is scored by its expected **daily cost**: set-up per day plus the operating cost of the 16:00-20:00
+dinner peak, averaged over 12 demand evenings.
+
+### 1.2 An open-data modular simulator
+
+The simulator has six modules. Each can be replaced with better data or a better model without touching the rest.
+
+| Module | What it does | Main code |
 |---|---|---|
-| `README.md` (this file) | The overview, glossary, final results and how-to. | Start here. |
-| `notes/SUMMARY.md` | The full project summary, one part per round (1 to 4): method, results tables, what changed between rounds, open decisions. | If you want the detailed story. |
-| `notes/DECISIONS.md` | Every modelling choice we had to make where the supervisor's write-up left room (timing rules, defaults, cost units, baseline rules, the round-3 service rule and solver protocol, the round-4 "E9 relaunch decisions" for the station planner). Binding for the code. | Before changing the model or arguing about a number. |
-| `notes/bilevel_siting_design.md` | The design note for the round-4 station planner: what the planner chooses, how a layout is scored, the five algorithms and the six sub-experiments. | Before touching the siting code. |
-| `notes/understanding.md` | Our reading notes on the four supervisor documents (proposal deck, first model, extended model "E2", worked toy example). | To understand where the model comes from. |
-| `notes/datasets.md` | What public data exists, how big it is, and what it can and cannot be used for. | When you want to know why we used a dataset. |
-| `notes/literature_demand_model.md` | How three published studies were turned into "which neighbourhoods order more food" weights. | When you care about the demand side. |
-| `notes/cost_calibration.md` | Where every dollar figure comes from (rider pay, electricity price, battery price, station rent), with sources. | When you doubt a cost number. |
-| `notes/data/*.json`, `*.csv`, `*.md` | Machine-readable versions of the costs, the Kaggle order statistics and the neighbourhood weights. | When running or editing the code. |
-| `notes/verify/` | Two stand-alone scripts that rebuild the supervisor's toy example and check the battery-conservation identities by hand. | To convince yourself the equations were read correctly. |
-| `data/raw/` and `data/MANIFEST.md` | The downloaded public data (restaurants, census tables, crash grid, bike counters) and a manifest with sizes, checksums and the exact download commands. | To check the data or re-download it. |
-| `ebike_swap_sim/` | The code: model, simple rule, instance generator, NYC data loader, cost checker, station planner. Its own `README.md` and `CONTRACT.md` describe the modules. | If you want to run or extend anything. |
-| `ebike_swap_sim/ebike_swap_sim/sites_nyc.py` | The 12 candidate station corners in Midtown (6 busiest restaurant cells, 3 landmarks, 3 neighbourhood centres), the menu of station kinds and sizes, and the code that turns a chosen layout into an instance the model can solve. | When changing the candidate list or the station menu. |
-| `ebike_swap_sim/ebike_swap_sim/bilevel.py` | The round-4 station planner: prices a layout by solving the operations model on several demand days, caches the answers, and searches over layouts in five ways (full enumeration, one integrated program, greedy search, the proposal deck's rule, cross-checks under the simple rule). | If you want to run or extend the siting study. |
-| `ebike_swap_sim/experiments/` | One script per experiment and round (E1 toy check; E2u, E3u, E4u and E8 with their `*_round3.py` versions, which are the final ones; `e9_bilevel_siting.py` for round 4). | To re-run an experiment. |
-| `ebike_swap_sim/experiments/e9_bilevel_siting.py` | The round-4 script with six sub-commands (`--validate`, `--sweep`, `--roles`, `--deck`, `--cross`, `--access`), each with `--dry-run` and `--smoke` modes and a wall-clock budget. | To re-run the siting study. |
-| `ebike_swap_sim/outputs/e1/RESULTS.md` and `outputs/*_round3/RESULTS_final.md` | The final result reports, one per experiment, with tables and figures, plus the raw `records.jsonl` and `results.csv` they were built from. **These are the deliverables.** The round-1 and round-2 folders (`e2_coord*`, `e2u_coord_usd`, `e3`, `e3u`, `e4_sizing`, `e4u_sizing_usd`, `e8_nyc_fixed`) are kept for provenance. | To read the numbers. |
-| `ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md` | The consolidated round-4 report on where to put the stations, naming the source of every number; the six sub-reports `{validate,sweep,roles,deck,access,cross}/RESULTS_final.md` with their figures sit next to it. `_first_attempt/` is a superseded earlier run kept for the record. | To read the siting numbers. |
-| `ebike_swap_sim/tests/` | 158 automated checks that the code still matches the written model, that the round-3 scripts behave, and that the station planner agrees with brute force at toy scale. | After changing code. |
-| `food_order.csv` | The Kaggle "FoodHub" order dataset (1,898 orders) used to calibrate preparation times and cuisine shares. | Rarely. |
+| Demand generation | Orders from restaurant inspections, census profiles and a public order sample | `generator.py`, `data_nyc.py`, `acs_weights.py` |
+| Rider behavior | Coordinated plan (integer program); rule-based and own-choice riders as alternatives | `arcs.py`, `ilp.py`, `aggregate.py`, `baseline.py`, `rolling.py` |
+| Station placement | Candidate sites, role and size menu, layout search and bounds | `sites_nyc.py`, `bilevel.py`, `benders.py` |
+| Battery stock and charging | Station stock by charge level, chargers, site and feeder power limits | `ilp.py`, `evaluate.py` |
+| Swap queue and service | Swap positions and swap time per site | `ilp.py`, `baseline.py` |
+| Policy limits and prices | Costs, time-of-use electricity, penalties | `costs.py`, `or_instance.py` |
 
-**Not included:** the supervisor's four PDFs (the proposal deck `Ebike Battery Swap.pdf`, the first model `Battery_Swap.pdf`, the extended model `E2.pdf`, and `E2+Example.pdf` with the worked toy example) and their extracted text and page images (`notes/extracted/`, `notes/figs/`), the full texts of the three papers in `notes/literature/` (copyright); the Chinese-language companion notes (`*_zh.md`); the per-run instance dumps (`ebike_swap_sim/outputs/*/instances/`, large, regenerated from the seed by every script); the internal workflow logs (`notes/workflow*.json`); and the solver log. Our notes quote the equation numbers of `E2.pdf`; the papers are cited in Section 8 with links.
+### 1.3 Two-stage (bi-level) model
 
-## 3. The idea in plain words
+**Upper level (planner).** Binary $w_{l\psi}=1$ if option $\psi$ (role, $B$, $C$) is built at location $l$.
+At most one option per location, total investment within $m$ budget units, at least one swap-capable site, and a
+charge-capable partner for every swap-only cabinet. The layout is $x=(y,B,C)$.
 
-**Time is cut into 5-minute steps.** A 4-hour dinner window is 48 steps. **A battery is cut into 12 levels**; one level is 50 Wh, so a full 600 Wh battery is level 12. Charging adds one level per step.
+```math
+V(x)=\mathrm{setup}(x)+\sum_{\xi\in\Xi} p_\xi\,\mathrm{OPEX}_\xi(x),\qquad
+V^*_m=\min_{x\in\mathcal X_m} V(x)
+```
 
-**Each rider follows a path.** Think of a board game. A rider's position on the board is "where am I, what time is it, how full is my battery". Each move is one action: wait one step; ride somewhere; deliver an order (ride to the restaurant, wait for the food, ride to the customer); or swap at a station (jump to a full battery). The model lists every legal move for every rider in advance (several hundred thousand to a million and a half of them) and picks exactly one path per rider.
+**Lower level (operations).** For a fixed layout and one evening $\xi$, $\mathrm{OPEX}_\xi(x)$ is the optimum of a
+time-expanded integer program. Time has 48 slots of 5 min. A battery has 24 levels of 25 Wh. A rider state is a node
+(place, time, charge level). The program chooses:
 
-**Stations keep a battery ledger.** For every station, every step and every battery level, the ledger says how many batteries are sitting there. A swap takes one full battery out and puts one low battery in. Charging moves a battery up one level. A shuttle takes batteries out at one station and puts them in at another a few steps later. The ledger must never go negative and must never exceed the shelf space.
+* **dispatch**: one path per rider through wait, reposition, delivery, swap and terminal arcs; each order is
+  served once or left unserved (60 USD penalty);
+* **swaps**: a swap takes a full battery out of the station and puts the rider's battery in;
+* **level-indexed station stock** $n_{jqt}$ with the balance
 
-**The solver picks the cheapest combination.** All the paths and ledgers are tied together by rules (every order is either delivered once or dropped; a station cannot hand out a battery it does not have; a charger cannot charge two batteries at once; the power drawn from the grid stays under its limit). A commercial solver (Gurobi) searches over all combinations that obey the rules and returns the one with the lowest total cost. Because it sees the whole evening at once, it can send a rider to swap early, or hold an order for a better rider, which a myopic rule cannot do. Since round 3 the model can also be told "serve at least 90 % of the orders, whatever it costs" as a hard rule.
+```math
+n_{j,q,t+1}=n_{jqt}-c_{jqt}+c_{j,q-1,t}+s_{jqt}-\mathbf 1[q=L]\,S_{jt}-D_{jqt}+A_{j,q,t+1}
+```
 
-**The simple rule we compare against.** Orders are handled first-come first-served. Each order goes to the nearest rider that has enough battery and is free. When a rider's battery drops to 3 of 12 levels, the rider goes to the nearest open station that has a full battery. Stations serve riders in arrival order and charge only as many batteries as they expect to need in the next hour. By default this rule never ships batteries between stations. It uses only information available at the moment, like a real dispatcher without a crystal ball. Both the model and the rule are priced with the same cost function on the same instance, so the comparison is fair.
+* **charging**: at most $C_j$ batteries per slot, site power $P_j$, and a shared feeder limit;
+* **transfers**: a timetabled service may move up to 6 batteries between two open sites within 2 km.
 
-## 4. Glossary
+The cost is electricity + riding + transfers + unserved orders + response time and lateness. The follower minimises
+the planner's own operating cost, so the bi-level model equals a two-stage stochastic integer program.
 
-### 4.1 Parameters (inputs we set)
+**Exact rider aggregation.** Riders with the same start node and the same arc set form a class. If every class is
+closed, the per-rider binaries become integer flows on one union network with the same optimum (proved in the
+paper; implemented as `ilp.build_model(aggregate=True)`). This makes the model several times smaller.
 
-| Symbol | Plain meaning | Typical value (rounds 2-3) | Where it is set |
-|---|---|---|---|
-| Delta | Length of one time step | 5 min | `experiments/common.py` (families), `or_instance.Discretisation` |
-| H | Number of steps in the planning window | 48 (4 h, 17:00-21:00); 24 in round 1 | `experiments/common.py` |
-| L | Number of battery levels | 12 | `experiments/common.py` |
-| eps | Energy in one battery level | 50 Wh (0.05 kWh) | `experiments/common.py`, `config.py` (600 Wh battery) |
-| eta | Charging efficiency (share of grid energy that ends up in the battery) | 0.9 | `or_instance.Discretisation` |
-| p_ch | Power one charger draws; follows from eps, eta and Delta | 0.667 kW | computed in `or_instance.py` |
-| kappa | Cost of riding one kilometre (bike wear only; rider pay is treated as already paid) | 0.12 $/km | `notes/data/cost_calibration_usd.json` via `costs.py` |
-| pi | Electricity price | 0.32 $/kWh | same |
-| P_i | Penalty for dropping an order | 30 $ | same |
-| w_i | Cost of customer waiting, per hour from order placement to delivery | 18 $/h | same |
-| v_i | Extra cost per hour of lateness beyond the promised time | 36 $/h | same |
-| f_e | Fixed cost of running one shuttle trip | 20 $ | same |
-| v_reb | Cost per battery carried on a shuttle | 1 $ | same |
-| F_j | Rent of a swap station for the 4-hour window (charging hub: 29.19) | 12.03 $ | same |
-| b^B, b^C | Holding cost of one spare battery / one charger per window | 0.332 $ / 0.082 $ | same |
-| K_j | Shelf space: maximum batteries a station can hold | 8 (hub 30) | `generator.py` `DEFAULT_FACILITIES_SPEC_R2` |
-| C_j bound | Maximum number of chargers a station may have | 6 (hub 20) | same |
-| M_j | Number of swap bays (riders served at the same time) | 1 | same |
-| sigma_j | Time a swap takes | 1 step | same |
-| P_j | Maximum charging power of one station | 4 kW (hub 12 kW) | same |
-| P_grid | Power limit shared by all stations on the same grid feeder | 8 kW; 6 kW from 18:00 to 20:00 | same |
-| q_res | Battery levels a rider must keep at the end to reach a station | 1 level | `generator.py` `DEFAULT_COSTS` |
-| rho | Share of all spare batteries that must be full again at the end of the window | 0.5 | same |
-| R_end | Full batteries each swap station must hold at the end of the window | 1 | same |
-| zeta | Minimum share of orders that must be served (a hard rule rather than a penalty; equation (33)) | 0.90 in the main round-3 run, 0.85 as a sensitivity; not used in rounds 1-2 | `ilp.build_model(zeta=...)`, `Instance.zeta`, `experiments/e2u_round3.py` |
-| q0 | A rider's battery level at the start | random, 4 to 7 of 12 | `generator.py` round-2 mode |
-| r_i, a_i, b_i | Order placed / food ready / promised delivery time | ready = placed + 20-35 min; promise = ready + 25 min | `generator.py` from `notes/data/kaggle_calibration.json` |
-| h^p, h^d | Handling time at the restaurant / at the customer | 1 step each | `experiments/common.py` |
-| Fhat, bhat, chat | Investment prices for the budget rule (station, battery, charger); one round-4 budget unit = Fhat + 3 bhat + 2 chat = 52,150 $ | 50,000 / 450 / 400 $ | `notes/data/cost_calibration_usd.json` (used by the round-4 station planner, Section 6.7) |
+### 1.4 Upper and lower bounds
 
-### 4.2 Variables (choices the model makes)
+Pricing one layout means 12 integer programs of minutes each. So for each budget we report an upper bound
+$`\mathrm{UB}_m`$ (the best layout found) and a lower bound $`\mathrm{LB}_m`$.
 
-| Symbol | Plain meaning | Type |
-|---|---|---|
-| x | For every rider and every legal move: is this move taken? | yes/no |
-| u | For every order: is it dropped? | yes/no |
-| y | For every candidate station: is it open? | yes/no (fixed to "open" in our experiments) |
-| B | Spare batteries placed at a station at the start | whole number (3 per site by default; free in the E4 "what would the planner buy" run) |
-| C | Chargers installed at a station | whole number (2 per site by default) |
-| n | Batteries at a station, per level, at every step (the ledger) | whole number |
-| c | Batteries being charged one level up at a station in a step | whole number |
-| h | Is a given shuttle trip used? | yes/no |
-| z | Batteries carried on that shuttle, per level | whole number |
-| s, S (derived) | Batteries returned by swapping riders per level / full batteries handed out | computed from x |
-| D, A (derived) | Batteries leaving / arriving by shuttle at a station | computed from z |
-| m_t (derived) | Batteries on the road at step t; used to check that no battery is lost | computed from z |
+**Two rider conventions.** *All-candidates* riders may reposition toward any candidate, even a closed one (the model
+of record). *Open-sites* riders reposition only toward open sites and depots. The open-sites library is a subset, so
 
-### 4.3 Knobs of the simple rule (baseline)
+```math
+\mathrm{OPEX}^{\mathrm{all}}_\xi(x)\le \mathrm{OPEX}^{\mathrm{open}}_\xi(x).
+```
 
-| Knob | Plain meaning | Default |
-|---|---|---|
-| `q_thr` | Battery level at or below which an idle rider goes to swap | 3 of 12 (a quarter) |
-| `stock_aware_site` | Go to the nearest station that actually has a full battery (station stock is public) | on |
-| `charge_rule = DEMAND_AWARE` | Charge only what the station expects to need in the next 12 steps (based on the last 12 steps) plus the end-of-window reserve | on; `HIGH_FIRST` = "charge everything as soon as possible" is the round-1 rule |
-| `jit_dispatch` | A rider may wait and leave "just in time" instead of arriving early at a restaurant | on |
-| `transfer_rule` | `NONE` (no shuttles) or `REORDER_POINT` (ship batteries when a station runs low) | `NONE` |
+Every priced cost (open-sites) is an upper bound under both conventions. Every all-candidates lower bound is valid
+under both. Open-sites integer-program bounds are used only in open-sites statements.
 
-## 5. What we did, step by step
+* **Upper bounds:** open-sites pricing of candidate layouts.
+* **Safe Lagrangian Benders cuts:** take any multipliers $\lambda$ of the scenario LP, project them to the dual
+  sign, recompute the reduced costs $\tilde c=c-A^\top\lambda$, and use the column bounds:
 
-**Round 1 (2026-10-11): build and verify.** We extracted the model from the supervisor's PDFs, rebuilt the worked toy example by hand and got the documented answer (cost 12.5). We then wrote the package `ebike_swap_sim/`: the rider path network, the station ledger, the solver model, the simple rule, a cost checker that prices any plan with the same formula, and a generator of synthetic Manhattan-like instances. Two reviewers compared the code line by line with the equations and found no error in the model; they found a fairness flaw in the simple rule (it was denied an "arrive just in time" move that the model had), which we fixed. We ran experiments E1-E4 in the paper's toy cost units (dropping an order cost 100, waiting 12 per hour) on a 2-hour window with 10 riders.
+```math
+\Theta_\xi\ \ge\ \beta^0_\xi+\beta_\xi^\top x,\qquad
+\beta^0_\xi=\lambda^\top b+\sum_{\text{cols}}\min\{\tilde c\,\underline\zeta,\ \tilde c\,\overline\zeta\},\quad
+\beta_\xi=-T^\top\lambda .
+```
 
-**Round 2 (2026-10-12): real dollars, longer window, real data.** The model itself did not change. We replaced the toy costs with dollar figures from 2025-2026 New York sources (rider minimum pay, Con Edison tariffs, battery prices, station rents), moved to a 4-hour dinner window with 6 riders and 36 orders, started riders at 30-60 % battery, improved the simple rule (stock-aware station choice, demand-aware charging), and re-ran E2, E3 and E4 as E2u, E3u, E4u. We added E8, a "semi-real" Manhattan instance built from real data:
+  The cut holds at every layout whatever the solver accuracy. Integer L-shaped cuts and cover rows are added too.
+* **Root LP:** all candidates open with free sizes, once per scenario; a floor for every layout.
+* **Regional superset bound and pair screen:** opening a site only adds options (with relaxed end targets). So the
+  LP with all sites of a region open and free sizes bounds every layout inside that region. For a pair of sites
+  this gives a screen: drop the pair if its bound is above the best cost found.
+* **Certificate:** budget $m$ is certified when $`\mathrm{UB}_m-\mathrm{LB}_m\le\max\{0.01\,\mathrm{UB}_m,1\}`$.
+  At one unit all 236 layouts are enumerated with pruning.
 
-- **NYC restaurant inspections (DOHMH):** 27,030 restaurants with coordinates and cuisine; 4,607 inside our Midtown/Chelsea/Flatiron study box.
-- **Census neighbourhood tables (DCP, ACS 2020-2024, 262 neighbourhoods):** population by age, ethnicity, income, children, living alone, students, turned into "how much this neighbourhood orders" weights with the formula from three published studies.
-- **Cyclist crash grid and bicycle counters (NYC Open Data):** downloaded and loaded as a risk layer and a cross-check of the evening peak; not used inside the cost yet.
-- **Kaggle FoodHub orders:** preparation time (uniform 20-35 min), delivery promise (25 min), cuisine shares, restaurant popularity (Zipf law).
-- **Three papers** (Section 8) on who orders food delivery: age is the dominant factor (18-29 year olds order about 3.4 times as often as 60+).
+Comparisons between layouts are paired on the same scenarios, with stratified 95 % intervals (6 df over the 12
+in-sample evenings; 3 df for the held-out weekday check).
 
-What is still **synthetic**: the street grid (150 m blocks rotated to Manhattan's 29-degree street angle; real restaurants and neighbourhood polygons are snapped onto it), the hills and traffic lights, and the hour-by-hour demand curve (lunch 28 %, dinner 45 %, late 12 %; declared as an assumption because no paper gives one).
+## 2. Code logic
 
-**Round 3 (2026-10-12 to 2026-10-13): more evenings, a hard service rule, every cell filled.** The model and the costs did not change; this round was about certainty. Three things were done. (1) Round 2 had tried a two-step variant ("first serve as many orders as possible, then minimise cost") whose answers the solver could not certify, so it was dropped and replaced by a hard service rule written into the model as constraint (33): at least 90 % of the orders must be served (the main setting), with 85 % as a sensitivity check. When the rule cannot be met, the scripts also compute the largest share of orders that any schedule could serve at all, so that "impossible" comes with a number. The end-of-window battery targets were kept as written, together with the "targets switched off" control. (2) Every solver cell that round 2 had skipped for lack of time was solved (round-2 solutions were reused only when they had been proven optimal or were within 1 % of optimal), and the four E3u cells that had stopped at a 2 % solver gap were re-run with a doubled time limit. (3) The random evenings were extended: E2u from 5 to 10 seeds (30 instances), E3u from 2 to 5, E4u from 3 to 6, E8 from 3 to 10. Same solver settings everywhere (3 threads, 300 s per solve, fixed solver seed); about 9 hours of solver time in total, nothing skipped. On the seeds that round 2 had already run, round 3 reproduces the round-2 numbers exactly, so every change in the headline figures comes from the new evenings, not from code changes. Scripts: `experiments/e2u_round3.py`, `e3u_round3.py`, `e4u_round3.py`, `e8_round3.py`; protocol in `notes/DECISIONS.md` (R3.1-R3.3).
+```mermaid
+flowchart LR
+    A["Open data<br/>DOHMH, ACS, FoodHub,<br/>DOT sites, Citi Bike GBFS"] --> B["Instance generator<br/>sites_nyc / generator / data_nyc"]
+    B --> C["Arc library<br/>arcs.py, aggregate.py"]
+    C --> D["Operations ILP<br/>ilp.py"]
+    C --> E["Rule policies<br/>baseline.py, rolling.py"]
+    D --> F["Layout evaluator + cache<br/>bilevel.LowerLevelEvaluator"]
+    E --> F
+    F --> G["Benders master and bounds<br/>benders.py"]
+    G --> H["Experiment drivers<br/>r7_siting.py, r7_search.py"]
+    H --> I["AWS lanes<br/>deploy/aws/run_lanes.sh"]
+    I --> J["records.jsonl, RESULTS.md"]
+```
 
-**Round 4 (2026-10-14): where should the stations go?** Rounds 1-3 took the station locations as given. The supervisor's proposal also asks where in Midtown the stations should be, of which kind, and how big. We answered it with a two-level model. The upper level is a planner that chooses, among 12 candidate corners in the Midtown study box (the six busiest restaurant cells, three grid-connected landmarks, three neighbourhood centres), which to open, in which role (swap-only, charge-only hub, or both), and how large (spare batteries and chargers), under an investment budget of m units of 52,150 USD (one unit buys one station with 3 spares and 2 chargers at the investment prices of Section 4.1: 50,000 + 3 x 450 + 2 x 400). The lower level is the unchanged operations model of rounds 2-3 with the stations fixed, solved once per demand day (a seed of the instance generator); the planner's score for a layout is the station cost spread over the 4-hour window plus the average operating cost over the demand days. Because planner and coordinator minimise the same cost, the two-level problem can also be written as one big stochastic program, which we used as the exact benchmark where it was small enough to solve. The setting is a stressed version of the Manhattan instance (`nyc4h_stress2`: 6 riders, 36 orders, 4 hours, riders starting at 25-50 % battery, 2.8 kW sites) so that batteries can actually run short. Five methods were run and compared: (A) the integrated stochastic program, (B) exhaustive enumeration of every layout, (C) a greedy search with local improvement, (D) the planner from the proposal deck (open one station per budget unit where the simple rule swaps most), and (E) a cross-check that re-prices every chosen layout under both the coordinated plan and the simple rule on two extra hold-out days. A sixth sub-experiment adds a fairness rule, "every neighbourhood within 8 or 12 blocks (1.2-1.8 km) of a swap point". About 7.9 hours of solver time in total. A first launch of this round on a harsher 8-rider setting produced nonsense (searches that reported "no feasible layout", a chosen station serving 7 % of orders); the causes were bookkeeping errors in the search, not in the model, and are listed in Section 6.7. Design: `notes/bilevel_siting_design.md`; conventions: `notes/DECISIONS.md` ("E9 relaunch decisions"); script: `experiments/e9_bilevel_siting.py`; report: `outputs/e9_bilevel/RESULTS_E9.md`.
+The arc library is shared by the ILP and the rule policies, so both are priced on the same moves. Every schedule
+is re-checked by `evaluate.check`. The evaluator caches each (layout, scenario) solve. The master turns LP duals
+into safe cuts. Every driver stage appends to `records.jsonl` and resumes from it.
 
-## 6. Results and outputs
+### Main modules
 
-All percentages below are **gap = (cost of the simple rule - cost of the model) / cost of the simple rule**, i.e. how much cheaper the coordinated plan is. "+/-" is a 95 % confidence interval (Student t) over random evenings ("seeds"); a wide interval means few seeds or very different evenings. Costs are dollars per 4-hour window per 3-station area (per chosen layout in Section 6.7). The numbers in the tables are the final (round-3, and round-4 for Section 6.7) ones; the earlier round-2 run is mentioned for comparison only.
+All paths are under `ebike_swap_sim/`.
 
-### 6.1 Round 1 to round 3: what changed
+| Path | Role |
+|---|---|
+| `ebike_swap_sim/or_instance.py` | Data model: discretisation, riders, orders, facilities, transfer services |
+| `ebike_swap_sim/generator.py` | Synthetic and round-5 instance families |
+| `ebike_swap_sim/data_nyc.py`, `acs_weights.py` | NYC restaurants, census zone weights, order destinations |
+| `ebike_swap_sim/sites_nyc.py` | Candidate sites (`manhattan_dot` family), size menu, layout to instance |
+| `ebike_swap_sim/arcs.py` | Time-expanded arc library and pruning rules |
+| `ebike_swap_sim/aggregate.py` | Exact rider aggregation and path decomposition |
+| `ebike_swap_sim/ilp.py` | Gurobi operations model, MIP starts, solution extraction |
+| `ebike_swap_sim/evaluate.py` | Cost function and constraint checker for any schedule |
+| `ebike_swap_sim/baseline.py` | Event-driven rule policy (nearest rider, threshold swaps) |
+| `ebike_swap_sim/rolling.py` | Rolling-horizon wrapper (online re-planning) |
+| `ebike_swap_sim/bilevel.py` | `LowerLevelEvaluator`, search heuristics, rule baselines |
+| `ebike_swap_sim/benders.py` | Scenario LPs, safe cuts, cut pool, master, subset bounds |
+| `ebike_swap_sim/costs.py` | Cost calibration in USD |
+| `experiments/r7_siting.py` | Siting driver: setup, feas, rootlp, m1, comparison, restricted, oos, analyse |
+| `experiments/r7_search.py` | Search driver: pairs, m3, roles, oos, noradius, price-list, ub-check, report |
+| `experiments/r7_gate.py`, `r7_cost.py` | Pre-run gate check; compute-cost summary of `cost.jsonl` |
+| `tests/` | About 480 pytest checks |
 
-| Item | Round 1 (2026-10-11) | Round 2 (2026-10-12) | Round 3 (2026-10-13, final) |
-|---|---|---|---|
-| Cost units | Toy: drop 100, waiting 12/h, riding 1/km | Dollars: drop 30 $, waiting 18 $/h, lateness 36 $/h, riding 0.12 $/km | unchanged |
-| Drop penalty divided by half an hour of waiting | 50 | 3.3 | 3.3 |
-| Instance | 10 riders, 2 h, 30 orders, batteries 60-70 % full | 6 riders, 4 h, 36 orders, batteries 30-60 % full | unchanged |
-| Random evenings (seeds) per experiment E2 / E3 / E4 / E8 | 5 / 2 / 3 / - | 5 / 2 / 3 / 3 | 10 / 5 / 6 / 10, every solver cell filled |
-| Simple rule | Nearest station, charge everything at once | Station with stock, charge on demand (only 1.8 % cheaper) | unchanged |
-| Service-level rule | none | "serve first, then minimise cost" two-step variant (could not be certified) | hard rule: at least 90 % served (85 % as sensitivity) |
-| E2 overall gap | 24.0 % +/- 8.7 | 21.9 % +/- 8.1 (15 instances) | **29.6 % +/- 5.6** (30 instances, cheaper on all 30) |
-| E2 gap at low / normal / high demand | 4.3 / 29.6 / 38.2 % | 6.9 / 21.3 / 37.3 % | 15.4 / 31.2 / 42.1 % |
-| What the gap is made of | 90 % dropped orders, 9 % lateness | 54 % lateness, 25 % waiting, 20 % dropped orders, <1 % riding + electricity | 59 % lateness, 32 % waiting, 8 % dropped orders, <1 % riding + electricity |
-| Cost of a 90 % service guarantee | - | - | 0.2 % of the model's cost at low demand, 5.5 % at normal demand, impossible at high demand with 6 riders |
-| Value of end-of-window battery targets | All of the transfer value came from them | A few dollars per instance | 0.34 $ per instance (E2u), 0.27 $ (E8) |
-| E3 value of shuttles, 1 hub / 2 hubs | 257 / 254.5 toy units | 6.6 / 12.6 $ (0 once end targets are relaxed) | 8.6 / 8.6 $ +/- 10.1, a lower bound (0 once end targets are relaxed) |
-| E3 extra cost of separate charging hubs | +55 / +98 toy units | +52 / +82 $ (29 / 58 of it hub rent) | +52.2 / +81.4 $ +/- 1.6 (29 / 58 of it hub rent) |
-| E3 model vs rule, layouts a / b / c | 48 / 37 / 36 % | 24 / 21 / 20 % | 21 / 18 / 18 % (+/- 10-11) |
-| "Ship when low" shuttle rule for the simple rule | Helped in separated layouts | Hurts everywhere: +143 to +302 $ | Hurts everywhere: +165 to +207 $ on average, on every seed |
-| E4 batteries the model needs per station | 2 (under stress) | 1 is enough | 1 is enough (now proven by solves, not bounds) |
-| E4 batteries the simple rule needs | more than 6 | 2-3 | 2 (the second battery is worth 44 $ +/- 22 per evening) |
-| Real data | none | Manhattan instance: 36.5 % +/- 29.3 | Manhattan instance: **31.8 % +/- 8.2**, positive on 20 of 20 instances |
-| Solver size and time | 0.7-1.0 M yes/no variables, 15-30 s | 0.9-1.5 M, about 90 s; NYC 0.58 M, 41 s | 0.9-1.6 M, 80-240 s per solve; NYC 0.55 M, 45 s |
+### Install
 
-### 6.2 E1: does the code reproduce the supervisor's toy example?
+Python 3.12 and Gurobi (`gurobipy` 13) with a licence. A free academic licence works.
 
-**Question:** when we feed the model the 2-rider, 3-order example from the write-up, do we get the documented answers?
+```bash
+git clone https://github.com/yuanmingchen922/Ebike_battey_swap.git
+cd Ebike_battey_swap
+python3.12 -m venv .venv && . .venv/bin/activate
+pip install -r deploy/aws/requirements.txt
+export GRB_LICENSE_FILE=/path/to/gurobi.lic   # never commit the licence
+```
 
-| Case | Expected | We got |
-|---|---|---|
-| Full model | 12.5 | 12.5 |
-| No end-of-window battery target | 11.2 | 11.2 |
-| Shuttles forbidden | 106 | 106 |
-| Simple rule, no shuttles / with shuttles | 108 / 14.5 | 108 / 14.5 |
+`import ebike_swap_sim` works without Gurobi; only the solver modules need it.
 
-Every ledger table printed in the documents is reproduced step by step, and the solver's cost always equals our independent cost checker. **Meaning:** the code is a faithful copy of the written model. Open `ebike_swap_sim/outputs/e1/RESULTS.md` and `inventory_toy.png`.
-
-### 6.3 E2u: what is coordination worth?
-
-**Question:** on the same orders, how much cheaper is the coordinated plan than the nearest-rider rule? (6 riders, 4 h, 3 stations, 10 seeds x 3 demand levels = 30 evenings)
-
-| Demand | Orders | Simple rule, $ | Model, $ | Gap |
-|---|---|---|---|---|
-| x0.75 (quiet) | 27 | 577 | 480 | 15.4 % +/- 7.3 |
-| x1 (normal) | 36 | 993 | 659 | 31.2 % +/- 9.1 |
-| x1.5 (busy) | 54 | 1,930 | 1,098 | 42.1 % +/- 5.7 |
-| All 30 evenings | | 1,167 | 746 | **29.6 % +/- 5.6** |
-
-The model is cheaper on all 30 evenings (smallest saving 3.7 %, largest 51.8 %). The earlier run (round 2, the first 5 seeds only) gave 21.9 % +/- 8.1 with 6.9 / 21.3 / 37.3 % by demand level; those 15 evenings are reproduced exactly inside the new set, and the five new seeds alone give 37.2 % +/- 6.2. The headline went up only because the new evenings are harder for the simple rule (its average cost 1,311 $ versus 1,022 $ on the old seeds) while the model's cost barely moves (765 $ versus 727 $): the model's cost varies by only 4-5 % from evening to evening, the simple rule's by 15-22 %.
-
-**With a hard service guarantee.** Round 3 adds the rule "serve at least a fixed share of the orders" and asks what it costs:
-
-| Minimum share served | Demand | Possible? | Extra cost over the plain model | Share actually served: with rule / plain model / simple rule | Gap vs simple rule |
-|---|---|---|---|---|---|
-| 90 % (main) | x0.75 | yes, 10 of 10 | 0.9 $ (0.2 %); only 3 of 10 evenings need any change | 95.6 / 94.4 / 96.7 % | 15.2 % +/- 7.3 |
-| 90 % (main) | x1 | yes, 10 of 10 | 37.4 $ (5.5 %); 8 of 10 evenings change, 1.4 to 176 $ | 92.2 / 87.5 / 87.2 % | 27.8 % +/- 8.7 |
-| 90 % (main) | x1.5 | no, 0 of 10 | not defined: the most any schedule can serve is 74-80 % of the 54 orders where proven (at most 83 % by the solver's bound), below the 49 orders (90 %) required | plain model 69.8 %, simple rule 62.6 % | - |
-| 85 % (sensitivity) | x0.75 | yes, 10 of 10 | 0 (the plain model already serves enough on every evening) | 94.4 / 94.4 / 96.7 % | 15.4 % +/- 7.3 |
-| 85 % (sensitivity) | x1 | yes, 10 of 10 | 8.0 $ (1.1 %); 2 of 10 evenings change | 88.6 / 87.5 / 87.2 % | 30.6 % +/- 8.6 |
-| 85 % (sensitivity) | x1.5 | no, 0 of 10 | not defined: needs 46 of 54 served, the ceiling is 40-43 orders where proven and at most 45 by the bound | plain model 69.8 %, simple rule 62.6 % | - |
-
-Pooled over the 20 evenings where the rule can be met, the model with the 90 % rule is 21.5 % +/- 5.9 cheaper than the simple rule (plain model on the same 20 evenings: 23.3 % +/- 6.5); with the 85 % rule, 23.0 % +/- 6.3. **Meaning:** a 90 % service promise is almost free on a quiet evening, costs about 5 % on a normal one (the model rescues 1.7 extra orders per evening and pays for it mostly with a few late deliveries: 5.7 per evening instead of 1.2), and simply cannot be kept on a busy evening with 6 riders, because 54 orders in 4 hours is more than 6 bikes can deliver under any plan. That is a fleet-size question, not a scheduling one.
-
-**Where the saving comes from.** Over the 30 evenings the simple rule spends 421 $ more per evening than the model: 59 % of that is late deliveries, 32 % is customers waiting longer, 8 % is dropped orders, and riding distance plus electricity are under 1 %. On a normal evening the model delivers 1.2 orders late against 16.5 for the simple rule, with an average order-to-door time of 50 min versus 63 min, while serving the same share of orders (87.5 % versus 87.2 %). On quiet evenings the model actually drops slightly more orders than the rule (1.5 versus 0.9 of 27), because at a 30 $ penalty a drop is cheaper than a late delivery; it then makes that back several times over in punctuality. Switching off the end-of-window battery targets changes the model's cost by 0.34 $ per evening, so none of the advantage comes from battery housekeeping. A side check from round 2 still holds: if rider wages are charged per order (variant `usd_A`), serving an order costs more than dropping it and the model drops 85 % of orders, which is a degenerate objective, not a finding. Open `ebike_swap_sim/outputs/e2u_round3/RESULTS_final.md`, `gap_by_demand.png`, `zeta_premium.png`, `cost_components.png`, `drop_rates.png`.
-
-### 6.4 E3u: are battery shuttles and separate charging hubs worth it?
-
-**Question:** if charging happens at a separate hub instead of at the swap station, how much does it cost, and how much do shuttles help? (same 9 batteries and 6 chargers in every layout; 5 seeds, all 60 solver cells solved)
-
-| Layout | Model, shuttles allowed | Model, shuttles forbidden | Value of shuttles | Extra cost vs co-located | Gap vs simple rule |
-|---|---|---|---|---|---|
-| (a) 3 stations that swap and charge | 638 +/- 29 | 638 +/- 29 | 0 | - | 21.3 % +/- 11.3 |
-| (b) 3 swap stations + 1 charging hub | 690 +/- 29 | 699 +/- 30 | 8.6 +/- 10.1 (lower bound; at most 22) | +52.2 +/- 1.6 (29.2 is hub rent) | 18.4 % +/- 10.6 |
-| (c) 3 swap stations + 2 hubs | 720 +/- 29 | 728 +/- 30 | 8.6 +/- 10.1 (lower bound; at most 22) | +81.4 +/- 1.6 (58.4 is hub rent) | 17.8 % +/- 10.4 |
-
-The earlier run (round 2, 2 seeds and 15 of 36 cells unsolved) had 637 / 690 / 719 $, shuttle values 0 / 6.6 / 12.6 $ and gaps 24 / 21 / 20 %; all of those sit inside the new intervals.
-
-**Meaning:** separating charging from swapping costs about 23 $ of operations per evening plus the hub rent, and the ranking co-located < 1 hub < 2 hubs holds on every seed. Shuttles are worth very little (one 2-battery shuttle trip per evening in the separated layouts, used only to top up the stations before closing time), and nothing at all once we drop the rule that stations must end the evening with full batteries: with the targets switched off the model uses zero shuttles on all 15 layout-and-seed pairs and the extra cost of separation is exactly the hub rent plus at most 0.4 $. In other words, in a 4-hour window the 9 spare batteries never run out, so the only reason to ship batteries is to be tidy at closing time. The "ship when low" rule for the simple dispatcher is harmful on every layout and every seed (+165 to +207 $ on average) because each of its 5-14 trips costs 20 $ and rescues at most one order. Caveat: the "shuttles allowed" cells of the separated layouts are the one cell type the solver cannot close; even with a doubled time limit (600 s) they stop at a 1.8-2.0 % solver gap, so the shuttle values for (b) and (c) are lower bounds with an upper bound of about 22 $. Open `ebike_swap_sim/outputs/e3u_round3/RESULTS_final.md`, `fig_cost_by_layout.png`, `fig_transfer_value.png`, `fig_gap_by_layout.png`.
-
-### 6.5 E4u: how big should a station be?
-
-**Question:** what happens to cost when we change spare batteries (B), chargers (C) and power (P) per station? (6 seeds for the battery sweep and the free-sizing run; 3 seeds for the charger and power sweeps; the full 20-cell battery-by-charger grid solved on seed 0)
-
-| Spare batteries per station | Model, $ | Simple rule, $ | Saving per extra battery, simple rule |
-|---|---|---|---|
-| 1 | 641 | 1,023 | 44.2 $ +/- 21.6 per evening (1 to 2) |
-| 2 | 641 | 890 | 6.1 $ +/- 10.8 (2 to 3), not significant |
-| 3 (default) | 641 | 872 | about 0 |
-| 4 | 642 | 874 | about 0 |
-| 6 | 644 | 867 | - |
-
-Headline gap at the default size: 24.6 % +/- 12.0 (6 seeds; the earlier 3-seed run gave 22.5 % +/- 21.3, and the three new seeds bracket the old ones).
-
-**Meaning:** for the coordinated plan, one spare battery per station is already enough: a second one is worth 0.35 $ of operations per evening, and every battery beyond the second costs more to hold than it saves. Chargers and station power are worth exactly nothing to it (the model's operating cost is the same number at 1, 2, 3 or 4 chargers and at 1.4 to 4.2 kW, now shown by solving every cell rather than by bounds). For the simple rule the second battery per station is worth about 44 $ per evening (about 65,000 $ per battery per year if every window looked like dinner), the third almost nothing, and even six batteries per station do not bring it to the model's service level: on three of the six seeds the rule tops out at 81-83 % of orders served against 86-89 % for the model, and on no seed does its cost come within 70 $ of the model's. Left to choose freely, the planner buys only 3-4 batteries and 2-4 chargers for the whole area instead of the default 9 and 6, saving 1.4 $ per evening; at those lean sizes the simple rule collapses (80 % served, gap 33.5 % +/- 10.5), so the value of coordination is largest exactly where a planner would size the stations. Open `ebike_swap_sim/outputs/e4u_round3/RESULTS_final.md`, `cost_vs_B.png`, `cost_vs_C.png`, `cost_vs_P.png`, `heatmap_BxC.png`, `free_sizing.png`.
-
-### 6.6 E8: does the advantage survive real Manhattan data?
-
-**Question:** with real restaurants, real neighbourhood demand weights and real candidate station locations in Midtown, is the model still better? (6 riders, 36 orders, 10 seeds, two station placements)
-
-| Station placement | Simple rule, $ | Model, $ | Gap |
-|---|---|---|---|
-| Busiest restaurant cells | 1,014 | 670 | **31.8 % +/- 8.2** |
-| Grid-connected landmarks (8th Ave/W 34th, Union Square, Grand Central) | 997 | 670 | 30.5 % +/- 8.6 |
-
-The gap is positive on all 20 instances (range 18-51 %). The earlier 3-seed run gave 36.5 % +/- 29.3 and 34.3 % +/- 37.6; those point estimates lie inside the new intervals, and the seven new seeds alone average 29.8 % / 28.9 %, so the first three evenings were on the optimistic side.
-
-**Meaning:** yes. The model's cost barely moves when the stations are relocated (at most 0.41 $ on any seed), while the simple rule swings by -9 % to +6 % with no consistent direction: a coordinated plan absorbs where the stations are, a myopic rule does not. The model serves 85.8 % of orders against 83.9 % for the rule, delivers 1.5 orders late per evening against 17.8, gets the food to the door in 0.83 h instead of 1.07 h on average, rides 95 km instead of 110 and buys a third of the electricity. The gap is 59 % lateness, 35 % waiting and 6 % dropped orders, the same shape as on the synthetic evenings. Switching the end-of-window battery targets off changes the model's cost by 0.27 $, so again none of the advantage is battery housekeeping; in fact the "targets off" model buys no electricity at all in 20 of 20 runs, which says that with 9 spare batteries for 6 riders the charging side of the problem never binds in a 4-hour window. The gap is a lower bound, because the NYC instance restricts the model's repositioning moves but not the rule's. All 40 solves finished to proven optimality in 28-64 s. Open `ebike_swap_sim/outputs/e8_round3/RESULTS_final.md`, `map_seed0.png` (the study box with restaurants, neighbourhood heat map, both station placements and rider paths), `gap_by_seed.png`, `cost_components.png`, `demand_comparison.png`. Ignore `outputs/e8_nyc/`, an earlier run with a flawed demand curve.
-
-### 6.7 E9: where to put the stations
-
-**Question:** if a planner may open any of 12 candidate corners in Midtown, choose each one's kind (swap-only, charge-only hub, or both) and size (spare batteries, chargers), and must stay within an investment budget, which layout gives the lowest expected cost once our coordinator runs the fleet on it? (6 riders, 36 orders, 4 h, riders starting at 25-50 % battery; 3 demand days in the search, 2 more as a hold-out; budget m = 1 to 4 units of 52,150 USD.) Costs below are dollars per 4-hour window: the station investment spread over the window (about 13 USD per unit) plus the expected operating cost.
-
-| Budget m | Budget, USD | Chosen layout | Invested, USD | Left unspent, USD | Expected cost, USD per window | Orders served |
-|---|---|---|---|---|---|---|
-| 1 | 52,150 | one swap-and-charge station at L02 (W 29th-30th St / 6th Ave), 3 spares, 2 chargers | 52,150 | 0 | 654.38 (13.2 setup + 641.2 operations) | 85.2 % |
-| 2 | 104,300 | the same station with 4 spares | 52,600 | 51,700 | 654.53 | 85.2 % |
-| 3 | 156,450 | same | 52,600 | 103,850 | 654.53 | 85.2 % |
-| 4 | 208,600 | same | 52,600 | 156,000 | 654.53 | 85.2 % |
-
-Every method agrees. Full enumeration and the integrated program pick the same corner and the same value on the small validation protocol (4 candidates, 2 days, budget 1: L02 with 2 spares and 1 charger, 676.22 USD, agreement to 13 decimal places; the integrated program's own lower bound stops 1.2 % below it). The three sets of allowed station kinds ({both only}, {swap-only, both}, {swap-only, hub, both}) return the identical layout at budgets 2 and 3: forcing every station to both swap and charge costs 0.00 USD, allowing separate charging hubs gains 0.00 USD. The coordinator never moved a battery between stations in any of the 84 solves of that run, so a hub (29.4 USD per window of fixed cost) adds exactly its rent, and a swap-only satellite (about 12 USD) holds dead stock. The best second station of any kind found anywhere saved 1.09 USD of operations against 11.9-12.2 USD of fixed cost.
-
-**Against the proposal's own planner and under the simple rule.** The proposal deck's rule (open one station per budget unit at the corners where the simple rule swaps most, size by swap demand) spends the whole budget by construction:
-
-| Budget m | Deck's layout | Deck's cost, USD | Two-level planner's cost, USD | Regret, USD (%) |
-|---|---|---|---|---|
-| 1 | L01 (7th Ave / W 32nd St), 3 spares, 2 chargers | 655.06 | 654.38 | 0.68 (0.10 %) |
-| 2 | L01 + L02 | 667.08 | 654.53 | 12.56 (1.92 %) |
-| 3 | L01 + L02 + L04 | 680.06 | 654.53 | 25.53 (3.90 %) |
-| 4 | L01 + L02 + L04 + L06 | 693.31 | 654.53 | 38.78 (5.93 %) |
-
-The regret is almost exactly the fixed cost of the extra stations; orders served, lateness and dropped orders are identical. Re-pricing the seven chosen layouts on five demand days under both operators shows that the **location** is robust (both the coordinator and the simple rule prefer L02, with L01 one cell away a statistical tie; among eight single-station corners the spread is 4.2 USD, 0.6 %) but the **size** is not: the coordinator is indifferent between 3 and 4 spares (0.15 USD) while the simple rule values the fourth spare at 47.4 USD per window because it runs the station dry; both agree that 2 spares are too few (+8.3 / +150.6 USD). On every layout the coordinator beats the simple rule by 31-41 % of the rule's cost, the same order as in E2u and E8. Adding the fairness rule "every neighbourhood within 8 or 12 blocks of a swap point" forces a second station at L05 (Rockefeller Center south) for +12.08 USD per window (+1.85 %) and +50,450 USD of investment; it covers 11 of 11 neighbourhoods at 12 blocks (8 of 11 at 8 blocks) and cuts the mean customer-to-station distance from 11.6 to 8.5 blocks, but the share of orders served does not move.
-
-**Meaning:** on this setting the answer to "where should the stations go" is smaller than the question: one well-stocked combined station at a busy central restaurant corner, and nothing else is worth its money. The reason is structural: with six riders in four hours the bikes, not the batteries, limit how many orders get served (85.2 % for every layout with at least three spares, from one station to four), so stations beyond the first only trim riding distance and electricity, worth a dollar or two against a fixed cost of 12-29 USD. Charge-only hubs and swap-only satellites are never used because the coordinator never ships batteries within a 4-hour window (the E3u finding in its extreme form). A planner should size the station for whoever will actually run the fleet: one more spare battery (450 USD) if it is a rule-based dispatcher, not if it is the optimiser.
-
-**Caveats.** The optimality claim rests on exhaustive pricing of every single-station move plus the small-scale agreement with the exact program; at full size (12 candidates, 3 days) the integrated program has 5.35 million variables and gave no usable bound in 10 minutes, so the budget-2-to-4 answers are heuristic incumbents without a certified gap. Two small search artefacts: the 4-spare answer lies outside the size menu the enumeration uses (the local search's "one more spare" move is bounded only by the shelf), and the budget-2 layout is 0.15 USD worse than the budget-1 layout, which would have been feasible (each budget's search restarts from scratch); both are immaterial at the 12-39 USD scale of the conclusions. The access run was cut by its wall-clock budget at 8 blocks and budget 3, one neighbourhood (MN0801) is beyond 8 blocks of every candidate so full coverage at 8 blocks is impossible, and the integrated program with the access rule as a hard constraint was not run, so there is no exact benchmark of the access cost. The first launch of this round, on an 8-rider family, is superseded and archived in `outputs/e9_bilevel/_first_attempt/`: it reported "no feasible layout" because running out of wall-clock time was treated as an infinite cost and because the access rule was enforced on single-station layouts that can never cover every neighbourhood, and it chose a one-spare swap-only station serving 7 % of orders because the cheap screening step valued stations the way the simple rule does, not the way the optimiser does. The lesson, now written into the code: every failure of the evaluator must be reported as a status, never folded into the objective, and a screening policy that values facilities differently from the model can silently steer the search. Open `ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md` (the consolidated report) and the sub-reports `sweep/RESULTS_final.md` with `map_sites_final.png`, `pareto_final.png`, `greedy_trajectory_final.png`; `roles/RESULTS_final.md` with `roles_priced_moves.png`; `deck/RESULTS_final.md` with `deck_vs_bilevel_final.png`, `map_deck_vs_bilevel.png`; `access/RESULTS_final.md` with `access_map.png`, `access_coverage.png`; `cross/RESULTS_final.md` with `cross_eval_final.png`; `validate/RESULTS_final.md` with `layouts_m1.png`, `map_validate_m1.png`.
-
-## 7. How to run it, and the limits
-
-**Install.** Python 3.12 with `numpy`, `pandas`, `networkx`, `matplotlib`, `pytest`, `openpyxl`, and `gurobipy` 13 with a licence (free academic licences exist). Everything except the solver runs without Gurobi.
+### Tests and a smoke run
 
 ```bash
 cd ebike_swap_sim
-export PYTHONPATH=$PWD
-python3 -m pytest tests -q                 # 158 checks, about 2 min
-python3 experiments/e1_toy.py              # toy check -> outputs/e1/
-python3 experiments/e8_round3.py --smoke   # one cheap NYC cell (seed 3, busiest placement), 30 s solver limit
-python3 experiments/e8_round3.py --seeds 3 --time-limit 300     # one NYC seed, both placements, all methods
-python3 experiments/e2u_round3.py --dry-run                     # print the full E2u plan without solving
-python3 experiments/e2u_round3.py --analyse                     # rebuild tables and figures from records.jsonl
-python3 experiments/e9_bilevel_siting.py --sweep --smoke        # station planner on toy siting instances, seconds
-python3 experiments/e9_bilevel_siting.py --sweep --budgets 1 --seeds 0 1 2   # one budget level of the siting search (tens of minutes of solver time)
+python3 -m pytest                                   # pytest.ini sets the path
+PYTHONPATH=. python3 experiments/e1_toy.py          # toy example, optimum 12.5
+PYTHONPATH=. python3 experiments/r7_siting.py --smoke --stage all   # toy siting run -> outputs/r7_siting_smoke/
+PYTHONPATH=. python3 experiments/r7_siting.py --stage setup --dry-run --lp-workers 1 --price-workers 1   # sizes of the real instance, no solve (several minutes)
 ```
 
-Each `*_round3.py` script appends one line per solver run to `records.jsonl` in its `outputs/<exp>_round3/` folder, refreshes `results.csv` after every run, records anything it could not start within its wall budget as `SKIPPED_BUDGET`, and has `--dry-run`, `--smoke` and `--analyse` modes. The `RESULTS_final.md` files are the hand-checked reports built from those records. A full round-3 rerun of all four experiments takes about 9 hours of solver time on 3 threads. The round-4 script `e9_bilevel_siting.py` works the same way (one sub-command per sub-experiment, `records.jsonl` and `results.csv` under `outputs/e9_bilevel/<sub>/`, a shared cache of lower-level solves under `outputs/e9_bilevel/cache/`); the six sub-experiments took about 7.9 hours of solver time, three processes in parallel.
+### The production siting run
 
-**Limits to keep in mind.**
+The production run uses the `manhattan_dot` family: 59 candidates, 12 scenarios plus 12 held-out, 8 riders,
+14-block approach radius. It ran on one AWS r7i.4xlarge in 48.1 instance hours (50.87 USD).
 
-- The street network is a synthetic grid with synthetic hills and traffic lights. Real restaurants and neighbourhoods are snapped onto it. Distances and energy use are therefore approximate.
-- The window is 4 hours with 6 riders and 36 orders, the largest size the solver finishes in a few minutes. A real fleet is much bigger; the method scales by rolling the window or decomposing, not yet implemented.
-- Costs are estimates with sources (see `notes/cost_calibration.md`), each with a low/base/high range. The choice to treat rider wages as already paid is a modelling decision, not a fact.
-- The rule that stations must end the evening with half their spare batteries full is the only reason shuttles have any value in E3. Change that rule and the transfer results change.
-- With 9 spare batteries for 6 riders, the battery side of the model (charging slots, station queues, grid limits) never binds in a 4-hour window, so these experiments say nothing about when it would. Larger fleets or longer windows are needed for that.
-- Sample sizes are 10 seeds (E2u, E8), 6 (E4u battery sweep) and 5 (E3u); the charger and power sweeps of E4u still rest on 3 seeds, although their values are flat to 0.1 $. The simple rule's cost varies a lot from evening to evening (its intervals are 7 times wider than the model's), so every gap is computed evening by evening and the intervals on the gap stay at +/- 6 to 12 points.
-- Three solver cells are not closed: the E3u "separated layout, shuttles allowed, targets as written" cells stop at a 1.8-2.0 % solver gap, so the value of shuttles there is a lower bound; two E2u cells and three E4u cells stopped within 0.3 % of optimal, which changes nothing.
-- The 90 % service rule is impossible at 1.5 times normal demand with 6 riders; how many riders would make it possible, and at what cost, has not been run.
-- The E8 gap is a lower bound because the NYC instance restricts the model's repositioning moves but not the rule's; the lossless check has not been run.
-- The station-siting answer of round 4 (one station is enough) holds for a setting in which the fleet, not the batteries, limits service: 85.2 % of orders are served for every layout with at least three spares. It says where the first station should go and that the second is not worth its rent here; it says nothing about settings where a second station would change who gets served (more riders per station, lower starting charge, a longer window, or a multi-day horizon in which chargers and hubs matter), which have not been run.
-- The round-4 search results at budgets 2 to 4 are heuristic incumbents without a certified optimality gap: the integrated stochastic program is exact but has 5.35 million variables at full size and gave no usable bound in 10 minutes; the exact agreement was shown only on the small validation protocol (4 candidates, 2 days, budget 1).
-- Two round-4 search artefacts, both immaterial at the scale of the conclusions: the budget-2-to-4 layout has 4 spares, outside the 3-spare menu the enumeration uses, and it is 0.15 USD worse than the budget-1 layout because each budget's search restarts from scratch.
-- The round-4 access run was truncated by its wall-clock budget at 8 blocks and budget 3; full coverage at 8 blocks is impossible for any layout (one neighbourhood is beyond 8 blocks of every candidate); and the exact benchmark (integrated program with the access rule as a hard constraint) was not run.
-- The round-4 search used 3 demand days and the hold-out check 2 more; the coordinator's in-sample and out-of-sample costs differ by at most 4.2 USD, but rankings closer than about 30 USD under the simple rule are not resolved with five days. The 12 candidate corners are all inside a 2 x 3.5 km box, so every candidate is within one detour of every order; a wider candidate set across Manhattan has not been tried.
-- The first launch of round 4 (8-rider family, `outputs/e9_bilevel/_first_attempt/`) is superseded and must not be quoted; its numbers came from search bookkeeping errors that have since been fixed and covered by tests.
+1. `r7_siting.py --stage feas` screens which sites can work alone.
+2. `r7_siting.py --stage rootlp` solves the root LP per scenario.
+3. `r7_siting.py --stage m1` enumerates one-site layouts; `r7_search.py --stage price-list --tier open_sites`
+   prices the open-sites list.
+4. `r7_search.py --stage pairs`, `m3`, `roles` search two and three units.
+5. `r7_siting.py --stage comparison` and `restricted` price the rules, the DOT pilot pair and the DOT-only search.
+6. `r7_search.py --stage oos` and `noradius` re-price on held-out scenarios and without the approach radius.
+7. `r7_siting.py --stage analyse` and `r7_search.py --stage report` write `RESULTS.md` and `SEARCH.md`.
 
-## 8. Data sources, licences and references
+All stages share `--out-dir` (default `outputs/r7_siting/`) and resume from its records. The lane plans are written
+with `--write-lanes` (`r7_search.py --write-lanes --lanes-plan r2` writes
+`outputs/cloud_lanes_siting_prod/lanes_r2.txt`). On AWS (`deploy/aws/`):
 
-| Data | Source | Terms |
+```bash
+# laptop
+deploy/aws/sync_up.sh                 # code and data to the server
+deploy/aws/upload_licence.sh          # Gurobi licence to the server (mode 600)
+# server (~/battery_swap)
+bash deploy/aws/bootstrap.sh          # venv, licence check, toy optimum 12.5, smoke stage
+bash deploy/aws/r7_prod_check.sh      # pre-flight check of code and lane plans
+. env.sh                              # venv, licence, cd ebike_swap_sim
+bash ../deploy/aws/run_lanes.sh start outputs/cloud_lanes_siting_prod/lanes_r2.txt
+bash ../deploy/aws/run_lanes.sh status outputs/cloud_lanes_siting_prod/lanes_r2.txt
+# laptop
+deploy/aws/sync_down.sh               # results back
+```
+
+Copy `deploy/aws/aws_env.example.sh` to `aws_env.sh` first (git-ignored). Final report:
+`ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md`.
+
+## 3. Results
+
+All values are USD per day, set-up included. Every cost is an open-sites cost.
+
+| Budget | Best layout found | Cost | Lower bound | Gap |
+|---|---|---|---|---|
+| 1 unit | DOT Site 34, open-sites riders | 1,085.87 | 1,084.31 | **0.14 %** (certified) |
+| 1 unit | same, all-candidates riders | 1,085.87 | 1,036.03 | 4.59 % |
+| 2 units | Greenwich Village grid cell + Citi Bike dock 3rd Ave & E 62nd St | 716.85 | 670.23 | 6.50 % |
+| 2 units | all-DOT pair: Site 34 + the same dock | 719.60 | | |
+| 3 units | best pair, 4 spares each | 709.98 | 670.23 | 5.60 % |
+
+### Finding 1: one site belongs in a corridor, led by DOT Site 34
+
+* Site 34 (2nd Ave & E 13th St) costs 1,085.87 and serves 77.5 % of orders.
+* For open-sites riders it is certified within 0.14 % of the best single site.
+* For all-candidates riders the gap is 4.59 %; Site 34 is not proven best there.
+* 11 sites lie within 3 %, all between 13th and 54th Street. Only 23 of 59 candidates can work alone.
+* The approach radius changes the order: without it three Midtown sites tie and Site 34 is eighth.
+
+### Finding 2: a second site cuts cost by a third
+
+* The best pair costs 716.85: 34 % less than one site. It serves 98.3 % of orders.
+* Unserved orders fall from 9.5 to 0.74 per day.
+* The all-DOT pair (Site 34 + the E 62nd St dock) is only $2.75 \pm 10.58$ more. A planner limited to listed
+  sites loses almost nothing.
+* A third budget unit buys batteries, not a third site: one more spare at both sites gives 709.98. The best
+  three-site layout priced costs $8.82 \pm 2.46$ more.
+
+![Best layout and lower bound per budget](docs/figs/fig_budget.png)
+
+### Finding 3: swap and charge at the same site
+
+* A swap-only cabinet plus a separate charging hub costs $728.92 \pm 65.93$ more. The hub stays idle: in a
+  four-hour evening it cannot return charged batteries in time.
+* A swap-only cabinet beside a full site costs $41.49 \pm 7.66$ more.
+
+### Finding 4: better than rules and the 2024 pilot
+
+| Two-site layout | Extra cost (in sample) | Held-out weekdays (3 df) | Open-sites regret interval |
+|---|---|---|---|
+| Spread rule | $+91.70 \pm 37.08$ | not measured | [89.09, 138.33] |
+| DOT 2024 pilot pair (Cooper Sq + Essex Market) | $+134.42 \pm 37.70$ | $+143.12 \pm 84.05$ | [130.86, 181.04] |
+| Coverage rule | $+141.48 \pm 38.12$ | $+130.37 \pm 84.01$ | [136.19, 188.10] |
+
+Held-out values cover weekday scenarios only (strata 1-3, stratified interval with 3 df); weekend held-out cells
+were not solved. The losses come almost entirely from 2.4 to 3.7 unserved orders per day. The best pair puts one site on each side
+of the island.
+
+![Daily cost by layout](docs/figs/fig_costs.png)
+
+### Context
+
+* **DOT 2024 pilot:** five public charging and swapping hubs (March-September 2024, swapping until February 2025);
+  two of them, Cooper Square and Essex Market, lie in our area.
+* **PEC programme:** DOT's Public E-Bike Charging programme has proposed 50 sidewalk sites citywide and will keep
+  about 25; a vendor call is planned for late 2026.
+* **Site 34:** a PEC proposal at the southeast corner of 2nd Ave and E 13th St, about 600 m from Cooper Square.
+
+### Checks on the operations model (earlier rounds)
+
+* Against the best of three rules, the coordinated plan is 25.1 % cheaper (95 % CI 20.2-30.1) on 30 synthetic
+  instances and at least 27.9 % cheaper (24.2-31.6) on 10 Midtown instances. 99.8 % of the saving comes from
+  serving more orders sooner.
+* Rolling re-planning keeps about half of that saving (ratio of means 0.42 and 0.53).
+* No battery moved by transfer in 45 solves without end targets.
+* Removing on-site charging costs 262.96 USD more per window (216.81-309.11).
+
+Sources: `ebike_swap_sim/outputs/R6_DIGEST.md` and `R6_FILL_DIGEST.md`.
+
+### What is proven and what is not
+
+* **Proven:** Site 34 is the best single site within 0.14 % for open-sites riders. For open-sites riders, the rule
+  and pilot layouts lose at least 33-136 USD per day (all regret intervals above zero).
+* **Not proven:** the one-site optimum for all-candidates riders (gap 4.59 %). The two- and three-unit answers are
+  the best found by a heuristic pair search (gap 5.6-6.5 %); 11 screened pairs could not be ruled out.
+
+### Limitations
+
+* 12 demand evenings, 8 riders and about 40 orders per evening; the held-out check covers weekdays only.
+* A four-hour evening is too short for transfers or hubs to pay. End-of-evening stock is not valued.
+* Riders follow a coordinated full-information plan; real online costs would be higher.
+* Citi Bike docks stand in for "a sidewalk place with power". Grid cells are not addresses. Cabinet space and
+  owner consent were not checked.
+
+## 4. Reference reading
+
+1. D. Ding, Z. Li, J. Zhang, X. Liu, J. Zhang, Y. Li, P. Cai, J. Liu, G. Long. "eBaaS: AIoT-Enabled eBike
+   Battery-Swap as a Service for Last-Mile Delivery." *Proc. ACM Web Conference (WWW '25)*, 2025, pp. 5045-5053.
+   https://doi.org/10.1145/3696410.3714503. *Use:* energy calibration (25 Wh/km) and the 2 km service radius.
+2. W. Li, Z. Li, X. Liu, R. Zhu, Z. Zheng, F. Wu. "Optimizing the Battery-Swapping Problem in Urban E-Bike
+   Systems with Reinforcement Learning." *Proc. IJCAI-25*, 2025, pp. 9259-9267.
+   https://doi.org/10.24963/ijcai.2025/1029. *Use:* battery rebalancing between stations; cost-aware transfer rule.
+3. Y. Xiong, J. Gan, B. An, C. Miao, A. L. C. Bazzan. "Optimal Electric Vehicle Charging Station Placement."
+   *Proc. IJCAI-15*, 2015, pp. 2662-2668. https://www.ijcai.org/Abstract/15/377. *Use:* budgeted bi-level siting;
+   our coverage and spread rules.
+4. J. Dumouchelle, R. Patel, E. B. Khalil, M. Bodur. "Neur2SP: Neural Two-Stage Stochastic Programming."
+   *Advances in Neural Information Processing Systems 35 (NeurIPS 2022)*, pp. 23992-24005.
+   https://doi.org/10.52202/068431-1742 (arXiv 2205.12006). *Use:* a learned surrogate for a faster pair search.
+5. J. Luke, M. Salazar, R. Rajagopal, M. Pavone. "Joint Optimization of Autonomous Electric Vehicle Fleet
+   Operations and Charging Station Siting." *2021 IEEE ITSC*, pp. 3340-3347.
+   https://doi.org/10.1109/ITSC48978.2021.9565089 (arXiv 2107.00165). *Use:* location-time-charge network for
+   siting with operations; idea behind rider aggregation.
+
+Longer notes on each paper are in [`reading/README.md`](reading/README.md). The PDFs are not in the repository.
+
+### Data sources
+
+* NYC DOT, *Safer Charging, Safer Deliveries: Lessons from NYC DOT's Public E-Bike Charging Pilot*, 2024.
+  https://www.nyc.gov/html/dot/downloads/pdf/safer-charging-safer-deliveries.pdf
+* NYC DOT, Public E-Bike Charging (PEC) proposed sites. https://nycdotprojects.info/project/1995/overview
+* NYC DOHMH restaurant inspection results (NYC Open Data 43nn-pn8j). https://data.cityofnewyork.us/d/43nn-pn8j
+* NYC DCP, American Community Survey 2020-2024 neighborhood profiles.
+  https://www.nyc.gov/content/planning/pages/resources/datasets/american-community-survey
+* FoodHub food ordering and delivery dataset (Kaggle).
+  https://www.kaggle.com/datasets/ahsan81/food-ordering-and-delivery-app-dataset
+* Citi Bike GBFS station information (field `is_charging`).
+  https://gbfs.lyft.com/gbfs/2.3/bkn/en/station_information.json
+
+Download commands and checksums are in [`data/MANIFEST.md`](data/MANIFEST.md); the candidate list is
+`data/raw/dot_candidate_sites.csv`.
+
+## 5. Earlier rounds
+
+The siting study (round 7) builds on six earlier rounds of work on the operations model.
+
+| Round | Topic | Report |
 |---|---|---|
-| Restaurant inspections | NYC Open Data, DOHMH dataset `43nn-pn8j` | NYC Open Data terms of use (free to use and share) |
-| Cyclist crashes | NYC Open Data, Motor Vehicle Collisions `h9gi-nx95` | same |
-| Bicycle counters | NYC Open Data `smn3-rzf9`, `uczf-rk3c` | same |
-| Neighbourhood (NTA 2020) census profiles | NYC Department of City Planning, ACS 2020-2024 5-year tables; polygons from NYC Open Data `9nt8-h7nd` | Public US Census data, free to use |
-| Neighbourhood ACS 2008-2012 (fallback only) | GeoDa Center sample data `nycnhood_acs` | Free for research and teaching |
-| FoodHub orders (`food_order.csv`) | Kaggle, "Food Ordering and Delivery App Dataset" (ahsan81) | CC0 public domain |
+| 1-3 | Operations ILP vs rule policy; transfers, sizing, Midtown instance | `notes/SUMMARY.md`; `ebike_swap_sim/outputs/e1/RESULTS.md`; `ebike_swap_sim/outputs/{e2u,e3u,e4u,e8}_round3/RESULTS_final.md` |
+| 4 | First bi-level siting on 12 Midtown candidates | `ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md` |
+| 5 | Reading-list extensions: aggregation, rolling horizon, network, RL, Manhattan family | `ebike_swap_sim/outputs/R5_DIGEST.md`; `ebike_swap_sim/outputs/r5_x*/RESULTS_final.md` |
+| 6 | Penalty recalibration, re-runs, first Manhattan siting pass | `ebike_swap_sim/outputs/R6_DIGEST.md`, `ebike_swap_sim/outputs/R6_FILL_DIGEST.md`; `ebike_swap_sim/outputs/r6_penalty/`, `ebike_swap_sim/outputs/r6_fill/`, `ebike_swap_sim/outputs/r6_o2/RESULTS_final.md` |
+| 7 | Production siting on 59 DOT-based candidates | `ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md` |
 
-Exact download commands, file sizes and checksums are in `data/MANIFEST.md`.
+Modelling decisions are recorded in `notes/DECISIONS.md`; the siting design is in `notes/bilevel_siting_design.md`
+and `notes/siting_scaleup_design.md`.
 
-**Papers used for the demand model** (full texts not included; all are open access):
+## 6. Repository map
 
-1. Buettner, S. A., Pasch, K. E., & Poulos, N. S. (2023). Factors associated with food delivery app use among young adults. *Journal of Community Health*. https://doi.org/10.1007/s10900-023-01229-1 (PMC10163566)
-2. Bennett, R., Gomez-Donoso, C., Zorbas, C., Sacks, G., White, C. M., Hammond, D., Gupta, A., Cameron, A. J., Vanderlee, L., Contreras-Manzano, A., & Backholer, K. (2025). Prevalence of online food delivery platforms, meal kit delivery, and online grocery use in five countries: an analysis of survey data from the 2022 International Food Policy Study. *International Journal of Obesity*, 49(7), 1307-. https://doi.org/10.1038/s41366-025-01771-z (PMC12283340)
-3. Tahim, J. C., Verde, S. M. M. L., Maia, C. S. C., & Bezerra, I. N. (2024). Consumption of food offered by delivery applications (apps). *International Journal of Environmental Research and Public Health*, 21(5), 568. https://doi.org/10.3390/ijerph21050568 (PMC11121648)
+```
+.
+├── README.md                 this file
+├── docs/figs/                figures used in this README
+├── data/                     public raw data, MANIFEST.md, validate.py
+├── food_order.csv            FoodHub order sample (preparation times, cuisine mix)
+├── reading/README.md         reading notes on the five papers
+├── notes/                    design notes, decisions, cost calibration, dataset notes
+├── deploy/aws/               AWS scripts: sync, bootstrap, lane dispatcher, pre-flight check
+└── ebike_swap_sim/
+    ├── ebike_swap_sim/       the package (model, data, siting, bounds)
+    ├── experiments/          one driver per experiment and round (r7_siting.py, r7_search.py, ...)
+    ├── tests/                pytest suite
+    └── outputs/              records and reports per experiment
+```
 
-The optimisation model itself is the supervisor's "E2" formulation (unpublished working documents, 2026); the implementation conventions are recorded in `notes/DECISIONS.md`.
+Not in the repository: the Gurobi licence, AWS keys and connection file, per-solve caches and snapshots,
+copyrighted PDFs, and paper drafts.

@@ -434,3 +434,232 @@ def test_e9_dry_run(tmp_path):
     r = _run("--validate", "--dry-run", "--out-root", str(tmp_path / "e9"), timeout=300.0)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     assert "layouts" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# Round 5 (notes/reading_to_model.md): O1 aggregated integrated model, M4 follower E,
+# A4 baselines / levers, M6 Manhattan region (toy scale unless noted)
+# ---------------------------------------------------------------------------
+def test_integrated_aggregated_equals_per_bike(evaluator, exhaustive_result):
+    """O1: the integrated model with the aggregated flow (feature-detected default) has the same
+    optimum as the per-bike sub-models and as the exhaustive enumeration."""
+    if not BL.aggregate_available():
+        pytest.skip("aggregate.py / ilp.build_submodel not available")
+    ig_p = BL.integrated_stochastic_ilp(evaluator, evaluator.candidates, BUDGET, time_limit=120.0, threads=1, aggregate=False)
+    ig_a = BL.integrated_stochastic_ilp(evaluator, evaluator.candidates, BUDGET, time_limit=120.0, threads=1)
+    assert ig_a["aggregate"] is True and ig_p["aggregate"] is False
+    assert ig_a["status"] == ig_p["status"] == "OPTIMAL"
+    assert ig_a["obj"] == pytest.approx(ig_p["obj"], abs=1e-6) == pytest.approx(exhaustive_result["best_value"], abs=1e-6)
+    assert ig_a["n_vars"] < ig_p["n_vars"] and ig_a["certified_ok"] and ig_a["V_certified"] == pytest.approx(ig_a["obj"], abs=1e-6)
+    ig_s = BL.integrated_stochastic_ilp(evaluator, evaluator.candidates, BUDGET, time_limit=120.0, threads=1,
+                                        mip_start_layout=exhaustive_result["best_layout"])
+    assert ig_s["mip_start"]["accepted"] and ig_s["obj"] == pytest.approx(ig_a["obj"], abs=1e-6)
+
+
+def test_evaluator_aggregated_lower_level_matches(toy_scenarios, evaluator):
+    """O1 in the evaluator: the aggregated lower-level ILP prices a layout like the per-bike one
+    (equivalent formulation) and is a different cache key."""
+    if not BL.aggregate_available():
+        pytest.skip("aggregate.py / ilp.build_submodel not available")
+    ev_a = BL.LowerLevelEvaluator(toy_scenarios, S.TOY_SPEC, time_limit=30.0, threads=1, aggregate=True)
+    lay = BL.Layout.of([("T1", "SC", 1, 1), ("T2", "S", 1, 0)])
+    out = ev_a.evaluate(lay)
+    assert out["V"] == pytest.approx(evaluator.value(lay), abs=1e-6)
+    assert all(r.get("formulation") == "aggregated" for r in out["rows"])
+    assert ev_a.cache_key(lay, 0, "ilp") != evaluator.cache_key(lay, 0, "ilp")
+    assert ev_a.cache_key(lay, 0, "baseline") == evaluator.cache_key(lay, 0, "baseline")
+
+
+def test_selfish_follower_cross_evaluate(evaluator):
+    """M4: follower E (r5_selfish equilibrium) is a lower-level policy; cross_evaluate prices
+    every follower and reports the price of decentralisation."""
+    lay = BL.Layout.of([("T1", "SC", 1, 1), ("T2", "S", 1, 0)])
+    cr = BL.cross_evaluate(evaluator, lay)
+    assert set(BL.POLICIES) <= set(cr)
+    vi, vs = cr["ilp"]["V"], cr["selfish"]["V"]
+    assert vs >= vi - 1e-9 and cr["price_of_decentralisation"] == pytest.approx(vs / vi)
+    row = cr["selfish"]["rows"][0]
+    assert row["status"] == "POLICY" and row["policy"] == "selfish" and row["equilibrium"]["iterations"] >= 1
+    assert row["ok_modulo_report_only"]
+    assert evaluator.cache_key(lay, 0, "selfish") != evaluator.cache_key(lay, 0, "baseline")
+    # the equilibrium schedule equals a direct run of baseline.run_selfish_equilibrium
+    from ebike_swap_sim import baseline as bl
+    from ebike_swap_sim.evaluate import cost
+    inst, lib = evaluator.layout_pair(lay, 0)
+    sched, _flags, _info = bl.run_selfish_equilibrium(inst, lib, {})
+    assert cost(inst, lib, sched)["total"] == pytest.approx(row["total"], abs=1e-9)
+    with pytest.raises(ValueError):
+        evaluator.evaluate(lay, "nobody")
+
+
+def test_policy_aware_greedy(evaluator):
+    """M4: the greedy with a policy as the lower level returns layouts priced by that policy."""
+    for pol in ("selfish", "baseline"):
+        g = BL.greedy_local_search(evaluator, evaluator.candidates, BUDGET, size_menu=TOY_MENU,
+                                   budget_levels=[130.0, BUDGET], screen=False, min_served_share=0.0, policy=pol)
+        assert g["policy"] == pol
+        for b, r in g["per_budget"].items():
+            assert r["status"] == "OK" and r["layout"] is not None and r["layout"].investment(S.TOY_SPEC) <= b + 1e-9
+            assert r["value"] == pytest.approx(evaluator.value(r["layout"], pol), abs=1e-9)
+    with pytest.raises(ValueError):
+        BL.greedy_local_search(evaluator, evaluator.candidates, BUDGET, size_menu=TOY_MENU, policy="nobody")
+
+
+def test_compliance_sweep_extremes(evaluator):
+    """M4 compliance sweep: alpha_c = 1 with the plan's station layer reproduces the ILP value;
+    alpha_c = 0 with the policy station layer equals the r5_selfish rule run directly."""
+    from ebike_swap_sim import baseline as bl
+    from ebike_swap_sim.evaluate import cost
+    lay = BL.Layout.of([("T1", "SC", 1, 1), ("T2", "S", 1, 0)])
+    cs = BL.compliance_sweep(evaluator, lay, alphas=(0.0, 0.5, 1.0), seeds=(0, 1))
+    summ = {r["alpha_c"]: r for r in cs["summary"]}
+    assert summ[1.0]["complete"] and summ[1.0]["V"] == pytest.approx(evaluator.value(lay), abs=1e-6)
+    assert all(r["check_ok"] or set(r["families"]) <= {"(9)", "(17)", "(18)"} for r in cs["rows"])
+    cs0 = BL.compliance_sweep(evaluator, lay, alphas=(0.0,), seeds=(0,), station_plan="policy")
+    direct = 0.0
+    for s in range(evaluator.n_scenarios):
+        inst, lib = evaluator.layout_pair(lay, s)
+        sched, _ = bl.run_baseline(inst, lib, bl.baseline_variant_params("r5_selfish"))
+        c = cost(inst, lib, sched)
+        direct += evaluator.p[s] * (c["total"] - c["C_setup"])
+    assert cs0["summary"][0]["V"] == pytest.approx(lay.allocated_cost(S.TOY_SPEC) + direct, abs=1e-6)
+
+
+def test_variants_and_lever_table(evaluator, toy_scenarios):
+    """A4 (iii): lever data (M_j, extra shuttle, grid factor) and the lever table."""
+    from ebike_swap_sim.costs import position_cost_per_window
+    lay = BL.Layout.of([("T1", "SC", 1, 1), ("T2", "S", 1, 0)])
+    inst = S.layout_instance(toy_scenarios[0], lay, S.TOY_SPEC)
+    n_svc, grid = len(inst.services), dict(inst.P_grid)
+    BL.apply_variant(inst, {"M": {"T2": 3}, "grid_factor": 1.1, "extra_shuttle": True}, S.TOY_SPEC)
+    assert inst.facility("T2:S").M == 3 and inst.facility("T1:SC").M == S.TOY_SPEC.M
+    assert all(a == pytest.approx(1.1 * b) for g in grid for a, b in zip(inst.P_grid[g], grid[g]))
+    assert len(inst.services) > n_svc and inst.validate() == [] and inst.meta["variant"]["grid_factor"] == 1.1
+    with pytest.raises(ValueError):
+        BL.apply_variant(inst, {"bogus": 1})
+    ev_v = evaluator.derive(variant={"grid_factor": 1.1})
+    assert ev_v.cache_key(lay, 0, "ilp") != evaluator.cache_key(lay, 0, "ilp") and ev_v.cache is evaluator.cache
+    lt = BL.lever_table(evaluator, lay)
+    assert {r["lever"] for r in lt["rows"]} == set(BL.LEVERS)
+    assert {(r["lever"], r["policy"]) for r in lt["best"]} == {(l, p) for l in BL.LEVERS for p in BL.POLICIES}
+    spare = next(r for r in lt["rows"] if r["lever"] == "spare" and r["site"] == "T2" and r["policy"] == "ilp")
+    assert spare["d_V"] == pytest.approx(evaluator.value(lay.replace("T2", ("T2", "S", 2, 0))) - evaluator.value(lay), abs=1e-6)
+    assert spare["d_investment"] == S.TOY_SPEC.bhat
+    pos = next(r for r in lt["rows"] if r["lever"] == "position" and r["policy"] == "ilp")
+    assert pos["d_allocated"] == pytest.approx(position_cost_per_window(400.0, window_h=1.0))
+    single = BL.lever_table(evaluator, BL.Layout.of([("T1", "SC", 1, 1)]), policies=("ilp",), levers=("shuttle",))
+    assert single["rows"][0]["status"] == "NA"
+
+
+def test_rule_baselines_and_capacity_matching(evaluator, tmp_path):
+    """A4 (i)-(ii): IJCAI-15 rule layouts within the budget, the rule table, the capacity-matched
+    present-day layout (same totals and investment) and the hub-list reader."""
+    cands = evaluator.candidates
+    dw = BL.demand_weights(cands, evaluator.scenarios, 1, evaluator.p)
+    assert set(dw) == {"T1", "T2"} and all(v >= 0 for v in dw.values())
+    sp = S.TOY_SPEC
+    assert BL.rule_layout("CSAV", cands, 50.0, sp) is None                       # below one site
+    for rule, w in (("CSCD", dw), ("CSTC", BL.access_weights(cands, evaluator.scenarios)), ("CSAV", None)):
+        for b in (130.0, BUDGET):
+            lay = BL.rule_layout(rule, cands, b, sp, w)
+            assert lay is not None and lay.investment(sp) <= b + 1e-9 and lay.valid(sp)
+            assert lay.n_open == min(2, int(b // (sp.Fhat + sp.bhat + sp.chat)))
+    top = max(dw, key=lambda l: (dw[l], -["T1", "T2"].index(l)))
+    assert BL.rule_layout("CSCD", cands, 130.0, sp, dw).locations() == (top,)
+    iso = BL.isolation_values(evaluator, cands)
+    lay_iso = BL.rule_layout("CSTC", cands, 130.0, sp, iso, lower_is_better=True)
+    feas = {l: v for l, v in iso.items() if v is not None}
+    assert lay_iso.locations() == (min(feas, key=feas.get),)
+    rb = BL.rule_baselines(evaluator, cands, [130.0, BUDGET], policies=("ilp", "baseline"), D_blocks=1)
+    assert len(rb["rows"]) == 2 * 3 * 2 and all(r["V"] is not None for r in rb["rows"] if r["status"] == "OK")
+    ref = BL.Layout.of([("T1", "SC", 2, 1), ("T2", "SC", 1, 0)])
+    pres = BL.present_day_sites(cands, data_dir=str(tmp_path))
+    assert pres["proxy"] and pres["n_points"] == 0
+    cm = BL.capacity_matched_layout(cands, ref, {"T1": 1.0, "T2": 3.0}, sp)
+    assert cm.n_open == ref.n_open and cm.total_B() == ref.total_B() and cm.total_C() == ref.total_C()
+    assert cm.investment(sp) == pytest.approx(ref.investment(sp)) and cm.valid(sp)
+    gbfs = {"data": {"stations": [{"lat": 0.0, "lon": 1.0, "is_charging_station": True},
+                                  {"lat": 0.0, "lon": 3.1, "is_charging_station": True},
+                                  {"lat": 0.0, "lon": 2.9, "is_charging_station": True},
+                                  {"lat": 0.0, "lon": 1.0, "is_charging_station": False}]}}
+    with open(tmp_path / BL.PRESENT_DAY_FILES[0], "w", encoding="utf-8") as fh:
+        json.dump(gbfs, fh)
+    pres2 = BL.present_day_sites(cands, data_dir=str(tmp_path))
+    assert not pres2["proxy"] and pres2["n_points"] == 3 and pres2["weights"] == {"T1": 1.0, "T2": 2.0}
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, "..", "data", "raw", "dohmh_restaurants.csv")),
+                    reason="DOHMH data not present")
+def test_manhattan_region_lattice_and_depots():
+    """M6: Manhattan south of 110th St, 2 km lattice candidates, entry-point depots, D anchored
+    to the eBaaS 2 km coverage."""
+    from ebike_swap_sim import data_nyc as dn
+    reg = dn.MANHATTAN_S110
+    assert S.access_radius_blocks() == 14 and S.access_radius_blocks(2000.0, 250.0) == 8
+    cands = S.lattice_candidates()
+    assert 10 <= len(cands) <= 20 and [c.id for c in cands] == [f"M{i:02d}" for i in range(1, len(cands) + 1)]
+    assert len({c.node for c in cands}) == len(cands) and all(c.source == "lattice" for c in cands)
+    assert all(reg.node_in_band(c.node) for c in cands)
+    assert all(S.manhattan_blocks(a.node, b.node) >= 2 for i, a in enumerate(cands) for b in cands[i + 1:])
+    cells = {tuple(int(x) for x in c.label.split("(")[1].split(")")[0].split(", ")) for c in cands}
+    assert len(cells) == len(cands)                                     # one candidate per 2 km cell
+    rest = dn.region_restaurants(reg)
+    assert set(rest["boro"]) == {"Manhattan"} and (rest["y"] <= reg.y_max + 1e-9).all()
+    dep = S.family_depots("r5_manhattan", cands)
+    assert len(dep) == 6 and dep == dn.entry_point_depots() and all(reg.node_in_band(d) for d in dep)
+    assert S.family_depots("nyc4h_stress2", cands) == [c.node for c in cands[:3]]
+    assert S.family_access_D("r5_manhattan") == 14 and S.family_access_D("nyc4h_stress2") is None
+    with pytest.raises(KeyError):
+        dn.resolve_region("brooklyn")
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, "..", "data", "raw", "dohmh_restaurants.csv")),
+                    reason="DOHMH data not present")
+def test_r5_manhattan_base_instance():
+    """M6 family ``r5_manhattan`` at reduced size (2 bikes): demand inside the region, eBaaS
+    calibration (L 24, q_res 2, concat), TOU price, riders at the entry points, layouts validate
+    and keep the demand."""
+    from ebike_swap_sim import data_nyc as dn
+    reg = dn.MANHATTAN_S110
+    cands = S.lattice_candidates()
+    base = S.make_base_instance(0, cands, family="r5_manhattan", n_bikes=2)
+    assert base.meta["family"] == "r5_manhattan" and base.meta["region"]["name"] == "manhattan_s110"
+    assert len(base.orders) == 10 and base.H == 48 and base.L == 24 and base.q_res == 2
+    assert base.options["energy_rounding"] == "concat" and base.pi == pytest.approx(0.442)
+    assert base.meta["tariff"]["name"] == "tou" and base.meta["energy_calibration"]["name"] == "ebaas"
+    assert all(6 <= b.q0 <= 12 for b in base.bikes)
+    assert [b.v0 for b in base.bikes] == dn.entry_point_depots()[:2]
+    assert all(str(r["zone_code"]).startswith("MN") for r in base.meta["orders"])
+    assert all(reg.node_in_band(o.o) and reg.node_in_band(o.d) for o in base.orders)
+    assert all(rec["lat"] > 0 and reg.in_band(rec["lat"], rec["lon"]) for rec in base.meta["restaurant_records"])
+    spec = S.spec_from_instance(base)
+    assert spec.P_kw == pytest.approx(1.4) and spec.grid_kw == pytest.approx(2.0)
+    lay = S.layout_instance(base, [("M08", "SC", 2, 1), ("M04", "SC", 1, 1)], spec)
+    assert lay.validate() == [] and C.demand_md5(lay) == C.demand_md5(base) and lay.services
+    assert lay.pi == pytest.approx(0.442)
+    # the region switch is opt-in: without it the builder records no region (old families unchanged)
+    assert "region" not in dn.make_nyc_instance(seed=0, n_bikes=1, n_orders=2).meta
+
+
+@pytest.mark.parametrize("sub", ["--manhattan", "--baselines", "--levers", "--policy-aware", "--compliance"])
+def test_e9_round5_smoke_modes(sub, tmp_path):
+    out = str(tmp_path / "e9")
+    r = _run(sub, "--smoke", "--out-root", out)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    sub_dir = os.path.join(out, sub.lstrip("-").replace("-", "_"))
+    for f in ("records.jsonl", "results.csv", "RESULTS.md"):
+        assert os.path.exists(os.path.join(sub_dir, f)), f
+    rows = C.load_jsonl(os.path.join(sub_dir, "records.jsonl"))
+    assert rows
+    if sub == "--compliance":
+        summ = {r["alpha_c"]: r for r in rows if r.get("kind") == "compliance_summary"}
+        assert summ and summ[1.0]["complete"]
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(ROOT, "..", "data", "raw", "dohmh_restaurants.csv")),
+                    reason="DOHMH data not present")
+def test_e9_round5_dry_runs(tmp_path):
+    for sub in ("--manhattan", "--baselines", "--levers", "--policy-aware", "--compliance"):
+        r = _run(sub, "--dry-run", "--out-root", str(tmp_path / "e9"), timeout=300.0)
+        assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+        assert "r5_manhattan" in r.stdout

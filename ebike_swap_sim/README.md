@@ -13,10 +13,15 @@ NYC data pipeline; "R2 implementation notes" at the end records the sizes actual
 round 3, sections R3.1-R3.3: the hard service-share constraint (33) replacing the lexicographic
 variant, end targets kept, the solve / reuse protocol and the extended seed sets; round 4, "E9
 relaunch decisions" E9R.1-E9R.4: the bi-level siting family, search rules and reposition
-conventions). The module API contract is in [`CONTRACT.md`](CONTRACT.md).
+conventions; round 5, "R5 implementation notes": the reading-list items A1-A7, M1-M10, O1 of
+`../notes/reading_to_model.md` and the round-5 sizes). The module API contract is in
+[`CONTRACT.md`](CONTRACT.md).
 
-The E2 mathematics (`ilp.py`, `arcs.py`, `evaluate.py`) is unchanged since round 1; the
-toy reference values 12.5 / 11.2 / 106 are reproduced by `experiments/e1_toy.py`.
+The E2 mathematics (`notes/extracted/E2.txt`, equations (1)-(33)) is unchanged since round 1;
+the toy reference values 12.5 / 11.2 / 106 are reproduced by `experiments/e1_toy.py`, by the
+per-bike model and by the round-5 aggregated integer flow (`ilp.build_model(aggregate=True)`, O1,
+an equivalent implementation of the same rows). Round 5 added only parameters, data, policies,
+wrappers and solver options (see "Round 5" below).
 
 ## Layout
 
@@ -40,9 +45,14 @@ ebike_swap_sim/                 run everything from here with PYTHONPATH=.
 │   │                           make_nyc_instance()
 │   ├── acs_weights.py          R2.4 literature zone weights from the ACS 2020-24 NTA tables (ACSZoneWeights)
 │   ├── sites_nyc.py            E9: the 12 Midtown candidate sites, siting families / size menus, layout -> instance,
-│   │                           admissibility rules, siting pruning (all_candidates / open_sites), sub-libraries
-│   └── bilevel.py              E9: Layout, LowerLevelEvaluator (cached E2 solves per scenario), exhaustive,
-│                               greedy_local_search, deck_heuristic, integrated_stochastic_ilp, cross_evaluate, [U4]
+│   │                           admissibility rules, siting pruning (all_candidates / open_sites), sub-libraries;
+│   │                           round 5 (M6): r5_manhattan family, 2 km lattice candidates, entry-point depots
+│   ├── bilevel.py              E9: Layout, LowerLevelEvaluator (cached E2 solves per scenario), exhaustive,
+│   │                           greedy_local_search, deck_heuristic, integrated_stochastic_ilp, cross_evaluate, [U4];
+│   │                           round 5: follower 'selfish' (M4), rule baselines / levers (A4), compliance sweep
+│   ├── aggregate.py            round 5 (O1): AggregatedNetwork, aggregated integer flow, path decomposition
+│   ├── rolling.py              round 5 (M7): rolling-horizon wrapper, BootstrapForecast, offline_vs_online
+│   └── rl_env.py               round 5 (A7): gymnasium StationEnv (station layer of the baseline as actions)
 ├── experiments/
 │   ├── common.py               instance families, pruning defaults, baseline variants, run_pair(), output helpers
 │   ├── e1_toy.py               E1: toy reproduction (12.5 / 11.2 / 106 / lexicographic / baselines / p.7 / identities)
@@ -57,9 +67,12 @@ ebike_swap_sim/                 run everything from here with PYTHONPATH=.
 │   ├── e9_bilevel_siting.py    round-4 bi-level siting (E9.1-E9.6: --validate / --sweep / --roles / --deck / --cross /
 │   │                           --access; --dry-run / --smoke; outputs/e9_bilevel/<sub>/)
 │   ├── r2_size_probe.py        round-2 size probe (R2.2): arcs / binaries / solve time per family and size
-│   └── r2_cost_variants.py     round-2 cost-variant comparison (R2.1 degenerate-objective check)
-├── tests/                      pytest suite, 158 tests (core, ilp, baseline, generator, costs, data_nyc, acs_weights,
-│                               experiments, round3, bilevel)
+│   ├── r2_cost_variants.py     round-2 cost-variant comparison (R2.1 degenerate-objective check)
+│   ├── rolling_horizon.py      round 5 (M7, E7): offline vs rolling vs forecast vs baseline, resumable JSONL
+│   └── a7_rl.py                round 5 (A7): PPO-clip training / evaluation of the station-layer agent
+├── tests/                      pytest suite, 307 tests (core, ilp, baseline, generator, costs, data_nyc, acs_weights,
+│                               experiments, round3, bilevel; round 5: aggregate, r5_eval, r5_instances, rolling,
+│                               rl_env, r5_integration)
 ├── outputs/                    experiment outputs; round 1: e1/, e2_smoke/, e2_coord/, e2_coord_v2/, e3/, e4_sizing/;
 │                               round 2: r2_probe/, e2u_coord_usd/, e3u/, e4u_sizing_usd/, e8_nyc_fixed/;
 │                               round 3 (authoritative): e2u_round3/, e3u_round3/, e4u_round3/, e8_round3/ (each with a
@@ -70,9 +83,10 @@ ebike_swap_sim/                 run everything from here with PYTHONPATH=.
 └── pytest.ini                  pythonpath = . so tests run without PYTHONPATH
 ```
 
-Only `ilp.py` imports gurobipy; `ebike_swap_sim.ilp`, `.baseline`, `.generator`, `.costs`,
-`.data_nyc` and `.acs_weights` are lazy attributes, so `import ebike_swap_sim` works
-without a Gurobi licence or the data files.
+Only `ilp.py` and `bilevel.py` (lazily) import gurobipy; `ebike_swap_sim.ilp`, `.baseline`,
+`.generator`, `.costs`, `.data_nyc`, `.acs_weights`, `.sites_nyc`, `.bilevel` and the round-5
+modules `.aggregate`, `.rolling`, `.rl_env` are lazy attributes, so `import ebike_swap_sim` works
+without a Gurobi licence, gymnasium or the data files.
 
 ## How the model maps to the modules
 
@@ -91,6 +105,10 @@ without a Gurobi licence or the data files.
 | Cost units (R2.1): `toy`, `usd_A`, `usd_sunk` (default), `usd_B`, `usd_low`, `usd_high`; `F, F_hub, bB, bC` scale with the window length | `costs.load_cost_calibration(variant, window_h)`, `generator.make_synthetic_instance(cost_variant=...)`, `data_nyc.make_nyc_instance(cost_variant=...)` |
 | Synthetic NYC-like instances (grid, zones, demographics, time-dependent demand, restaurants, facilities, shuttle services); round-2 mode with Kaggle order attributes and the assumed time profile (R2.2) | `generator.make_synthetic_instance`, `generator.default_pruning`, `generator.estimate_arcs` |
 | Semi-real NYC instances (R2.4): DOHMH restaurants mapped to the 14 Kaggle cuisines, Zipf popularity, ACS literature zone weights (GeoDa fallback), real site coordinates projected on the synthetic grid | `data_nyc.make_nyc_instance`, `data_nyc.StudyBox`, `data_nyc.NYCRestaurantSampler`, `data_nyc.NYCDestinationSampler`, `acs_weights.ACSZoneWeights` |
+| Round 5, O1: aggregated integer flow (one flow per class of bikes with the same start state and arc set; (5) with supplies, (9) summed, (6), (12), (22), (29)-(30) unchanged sums; per-bike schedule by path decomposition) | `ilp.build_model(..., aggregate=True)`, `ilp.build_submodel`, `aggregate.AggregatedNetwork`, `arcs.arc_key` |
+| Round 5, M1: end targets (17)-(18) by parameters only (boundary grid rho x R_end_j, periodic bracket) and the end-state adjustment `pi (eps/eta)[sum_j sum_q (L-q)(n_jqH - n_jq0) + sum_k (q0_k - q_k(H))^+]`, reported next to (26) | `experiments.common.boundary_grid` / `end_target_copy` / `relax_end_targets`; `evaluate.cost(...)['C_end_adjust', 'total_end_adjusted']`, `evaluate.end_state_adjustment` |
+| Round 5, A3: metric pack (SBUR, BSR, batteries saved, rider station time, outage / stranding, empty km, peak kW, kWh by price period) | `evaluate.metric_pack`, `metrics(...)['r5']`, `experiments.common.flatten_r5` |
+| Round 5, M9: battery lock-out as data-fixed transfers to a charge-only sink (h_e = 1 bounds on (10)) | `generator.add_battery_lockout`; fixed automatically by `ilp.build_model`, executed by the baseline (`flags['forced_transfers']`), `metrics(...)['lockout']` |
 
 Every schedule — ILP incumbent or baseline — is a `Schedule` priced by `evaluate.cost` and
 verified by `evaluate.check`; `ilp.solve` refuses to return a schedule whose checker report is
@@ -113,6 +131,11 @@ schedule among the `baseline_round1` / `baseline_reserve` variants and records
 | `usd8h` | generator, round-2 mode | 6 bikes, 8 h window 14:00-22:00 (H 96), 72 orders — registered **rolling-horizon only** (`meta['rolling_horizon_only']`) until a single-ILP probe passes | `usd_sunk` |
 | `nyc4h` | `data_nyc.make_nyc_instance` | 6 bikes, 4 h, 36 orders (0.75 M arcs under `PRUNING_NYC`); DOHMH restaurants + ACS zone weights in the Midtown study box; sites = busiest restaurant cells; releases from the R2.2 block profile as a step function (same object as `usd4h`, `meta['hourly_profile_used']`) | `usd_sunk` |
 
+| `r5_stress4h` (round-5 main) | `generator.make_r5_instance` (`builder: 'r5'`) | 6 bikes, 4 h dinner window 16:00-20:00 (H 48), 2.0 orders per bike-hour -> 48 orders, eBaaS energy (25 Wh/km, eps 25 Wh, L 24, q_res 2 levels), `q0 ~ U{6..12}` of 24, 3 co-located sites B 2 / C 1 / Cbar 4, 3 depots, r5 time profile (peaks 10-13 h, 17-18 h); single ILP with the aggregated flow (O1) and reachable pruning (`R5_PRUNING`) | `usd_sunk` + `tou` tariff |
+| `r5_stress4h_k8`, `r5_stress4h_k10` | same | 8 / 10 bikes (64 / 80 orders), fleet cells of A6 | same |
+| `r5_stress8h` | same | 6 bikes, 8 h lunch + dinner window 10:30-18:30 (H 96), 96 orders; **rolling horizon** (M7), single aggregated ILP only as the offline reference | same |
+| `r5_manhattan` (E9, M6) | `sites_nyc.make_base_instance(family='r5_manhattan')` | 8 bikes / 40 orders / 4 h 16:00-20:00, Manhattan south of 110th St, 15 lattice candidates, riders entering at 6 bridge / tunnel points, eBaaS energy, TOU | `usd_sunk` + `tou` |
+
 Sizes of the round-2 families were fixed by `experiments/r2_size_probe.py`
 (`outputs/r2_probe/`, summarised in `../notes/DECISIONS.md`, "R2 implementation notes").
 `pruning_for(inst)` applies the plan's pruning (`reposition_targets` = restaurants + facilities +
@@ -133,7 +156,7 @@ run with `OutputFlag=0`, `Threads=3` (round-2 rule; round-1 outputs used 4) and 
 cd ebike_swap_sim
 export PYTHONPATH=$PWD
 
-# tests (about 2 min with the data-driven tests; 158 tests)
+# tests (about 5 min with the data-driven and Gurobi tests; 307 tests)
 python3 -m pytest tests -x -q
 
 # E1: toy reproduction -> outputs/e1/results.csv, RESULTS.md, figures
@@ -158,6 +181,23 @@ python3 experiments/e9_bilevel_siting.py --sweep --budgets 1 --seeds 0 1 2 --wal
 
 # zone-weight table from the ACS files -> notes/data/zone_weights_manhattan.csv
 python3 -m ebike_swap_sim.acs_weights
+
+# round 5: rolling horizon (E7, M7), RL comparator (A7), Manhattan-wide siting (M6)
+python3 experiments/rolling_horizon.py --family usd4h --seeds 0-4 --lambdas 0,10,20,inf --aggregate --baseline
+python3 experiments/a7_rl.py all --family nyc4h_stress2 --timesteps 200000 --test-seeds 0:10 --ilp-time-limit 120
+python3 experiments/e9_bilevel_siting.py --manhattan --dry-run
+```
+
+Round-5 programmatic use (aggregated ILP, round-5 family, metric pack, end-state adjustment):
+
+```python
+from experiments import common as C
+from ebike_swap_sim import build_arcs, ilp, baseline, metrics, cost
+inst = C.make_instance("r5_stress4h", seed=0)                 # generator.make_r5_instance
+lib = build_arcs(inst, **C.pruning_for(inst))                  # reachable pruning (R5_PRUNING)
+sched_bl, flags = baseline.run_baseline(inst, lib, baseline.baseline_variant_params("r5"))
+sched, st = ilp.solve(inst, lib, mip_start=sched_bl, aggregate=True, threads=3, time_limit=300)
+print(st["obj"], cost(inst, lib, sched)["total_end_adjusted"], metrics(inst, lib, sched)["r5"]["min_sbur"])
 ```
 
 Minimal programmatic use:
@@ -410,6 +450,47 @@ every number, and the authoritative numbers live in the six sub-reports
   answer lies outside the enumeration menu, the m >= 2 value is 0.15 USD above the m = 1 layout (local search
   restarts per budget), and the first launch (`_first_attempt/`) is degenerate and superseded.
 
+## Round 5 (2026-10-17): reading list -> model (`../notes/reading_to_model.md`)
+
+Five papers (`../reading/`: eBaaS WWW-25, battery-swap RL IJCAI-25, EV charging placement IJCAI-15, Neur2SP
+NeurIPS-22, AEV fleet + siting ITSC-21) were mapped onto the model; **no E2 equation changed**. What exists now
+(details and sizes in `../notes/DECISIONS.md`, "R5 implementation notes"; API in `CONTRACT.md` section 6):
+
+| item | what | where |
+|---|---|---|
+| A1 | eBaaS energy calibration: 25 Wh/km, eps 25 Wh, L 24, concat rounding, q_res 2 levels, sigma 1 slot | `config.energy_calibration`, `make_synthetic_instance(energy_calibration=...)` |
+| A3 | metric pack (SBUR, BSR, batteries saved, station time, outage, empty km, peak kW, kWh by price period) | `evaluate.metric_pack`, `metrics(...)['r5']`, `common.flatten_r5` |
+| A4 | E9 siting baselines CSCD / CSTC / CSAV, capacity-matched present-day layout, marginal-lever table | `bilevel.rule_baselines`, `lever_table`; `e9_bilevel_siting.py --baselines / --levers` |
+| A5 | value-of-the-network counterfactual (home charging at the depots) | `generator.home_charging_counterfactual` |
+| A6 | fleet x spare x pack grid, allocated bike / rider cost | `generator.fleet_spare_pack_grid`, `make_fleet_sweep_instance`, `costs.allocated_bike_cost` |
+| A7 | RL comparator on the station layer (PPO-clip) | `rl_env.StationEnv`, `experiments/a7_rl.py` |
+| M1 | end targets by parameters (rho x R_end grid, periodic bracket, R_end_j = 0 at swap-only sites) and end-state adjustment | `common.boundary_grid`, `evaluate.cost(...)['total_end_adjusted']` |
+| M2-M4 | range-aware + reservation swap rule, cost-aware zero-sum transfers, logit station choice / selfish equilibrium / compliance | `baseline` variants `r5_range`, `r5_transfer`, `r5_selfish`, `r5`; `run_selfish_equilibrium`, `simulate_compliance`; E9 follower `'selfish'` |
+| M5 | eBaaS operating day (peaks 10-13 h, 17-18 h), stressed families, TOU tariff | `generator.R5_TIME_PROFILE`, `R5_FAMILIES`, `costs.load_tariff` |
+| M6 | Manhattan-wide siting family (south of 110th St, 2 km lattice, entry-point depots, 2 km coverage) | `sites_nyc.R5_MANHATTAN_FAMILY`, `data_nyc.MANHATTAN_S110`; `e9_bilevel_siting.py --manhattan` |
+| M7 | rolling horizon with bootstrap forecast battery plan, offline vs online | `rolling.rolling_horizon`, `experiments/rolling_horizon.py` (E7) |
+| M8-M10 | cyclic tours, battery lock-out (forced transfers to a sink), position / power-cap / charger-speed levers | `services_spec={'mode': 'cyclic'}`, `generator.add_battery_lockout`, `swap_position_variants`, `site_power_cap_sweep`, `charger_speed_variants` |
+| O1 | aggregated integer flow (equivalent E2 implementation, per-bike schedule by path decomposition) | `aggregate.py`, `ilp.build_model(aggregate=True)`, `ilp.build_submodel` |
+
+**Sizes and probe (seed 0, Threads 3, TimeLimit 300 s; `experiments/common.py` "R5 sizes"):**
+
+* `r5_stress4h` (6 bikes / 48 orders / H 48 / L 24, 3.14 M per-bike arcs): aggregated ILP **OPTIMAL 750.21 USD in
+  75 s** (512 k variables) where the per-bike ILP stops at a 33.8 % gap; baseline 1134.20 USD, served 0.896. The battery
+  side binds, weakly for the coordinator (LP shadow price of a spare 0.27-0.28 USD per site; 55 stock-out slot-sites).
+* `r5_stress4h_k8` (8 bikes / 64 orders): aggregated gap 1.39 % at 300 s (per-bike 108 %); LP shadow prices 7.6-8.5 USD
+  per spare and 7.2-11.1 USD per charger per site; baseline served 0.688 vs ILP 0.953 -- the battery-binding headline,
+  TimeLimit 600 s. `r5_stress4h_k10`: gap 3.45 %, spare 36 USD per site, A6 cell only.
+* `r5_stress8h` (6 bikes / 96 orders / H 96) is operated by the rolling horizon (lambda 10 min: 2060-2139 USD in 120 s
+  vs baseline 2470 USD); the single aggregated ILP is its E7 offline reference (1526.57 USD, gap 1.86 % at 300 s). At 8
+  bikes the aggregated ILP keeps a 48.5 % gap, at 10 bikes it finds no incumbent.
+* `r5_manhattan` (8 bikes / 40 orders): one-site layout OPTIMAL in 32 s, three-site layout gap 1.6 % at 300 s; the
+  layouts differ by about 100 USD per window.
+* Rolling horizon on `usd4h` seed 0 (W 24, k 6): lambda 0 / 10 / 20 min in 17 / 22 / 25 s (offline optimum 615.18 in
+  115 s). PPO station agent: about 490 training steps per second (200 k steps in about 7 min).
+
+The round-5 experiments themselves (E2u / E3u re-runs with the new baseline, E7 on seeds 0-4, A5 / A6 / M9 / M10
+sweeps, the A7 training, the E9 Manhattan study) have not been run yet; only the probes above exist.
+
 ## Pointers
 
 * Binding decisions: `../notes/DECISIONS.md` (read first when changing semantics).
@@ -417,4 +498,5 @@ every number, and the authoritative numbers live in the six sub-reports
 * Round-2 background: `../notes/cost_calibration.md`, `../notes/literature_demand_model.md`,
   `../data/MANIFEST.md`, `../notes/data/zone_weights_README.md`.
 * Plan (entity mapping, baseline spec, generator spec, size estimates): `../notes/workflow1_result.json`.
+* Round-5 plan from the reading list: `../notes/reading_to_model.md` (papers in `../reading/`, guide `../reading/README.md`).
 * Standalone verifications: `../notes/verify/toy_e2_example.py`, `../notes/verify/identity_checks.py`.

@@ -1,0 +1,32 @@
+# R7 siting lanes for deploy/aws/run_lanes.sh -- written by experiments/r7_siting.py --write-lanes
+# target: 16 vCPU = 8 physical cores -> dispatcher budget 12 threads; LP stages 12 threads, ILP stages 12 threads
+# start on the server (from the project root, after deploy/aws/sync_up.sh): LANES_DIR=ebike_swap_sim/outputs/cloud_lanes_siting deploy/aws/run_lanes.sh start ebike_swap_sim/outputs/cloud_lanes_siting/lanes.txt --max-threads 12
+# setup -> comparison -> m1 -> bb2 -> bb3 -> polish -> (restricted | written | oos | compliance | hubecon) -> analyse
+# every lane declares the threads its own pools use (--max-threads of its command); the parallel lanes fit together
+# every stage resumes from records.jsonl + cuts.jsonl + cache/; re-run `run_lanes.sh start` after a Spot restart
+# regenerate after stage comparison with the measured unit times (design 3.3) when they exceed the table by 30 %
+# format: name <TAB> threads <TAB> after <TAB> command (bash, from the package root)
+# r7_setup: about 80 min (design 3.2 estimate)
+r7_setup	12	-	python3 experiments/r7_siting.py --stage setup --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_comparison: about 240 min (design 3.2 estimate)
+r7_comparison	12	r7_setup	python3 experiments/r7_siting.py --stage comparison --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_m1: about 210 min (design 3.2 estimate)
+r7_m1	12	r7_comparison	python3 experiments/r7_siting.py --stage m1 --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_bb2: about 600 min (design 3.2 estimate)
+r7_bb2	12	r7_m1	python3 experiments/r7_siting.py --stage bb2 --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_bb3: about 240 min (design 3.2 estimate)
+r7_bb3	12	r7_bb2	python3 experiments/r7_siting.py --stage bb3 --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_polish: about 90 min (design 3.2 estimate)
+r7_polish	12	r7_bb3	python3 experiments/r7_siting.py --stage polish --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_restricted: about 40 min (design 3.2 estimate)
+r7_restricted	4	r7_polish	python3 experiments/r7_siting.py --stage restricted --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_written: about 150 min (design 3.2 estimate)
+r7_written	4	r7_polish	python3 experiments/r7_siting.py --stage written --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_oos: about 120 min (design 3.2 estimate)
+r7_oos	4	r7_polish	python3 experiments/r7_siting.py --stage oos --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_compliance: about 30 min (design 3.2 estimate)
+r7_compliance	4	r7_polish	python3 experiments/r7_siting.py --stage compliance --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_hubecon: about 80 min (design 3.2 estimate)
+r7_hubecon	4	r7_polish	python3 experiments/r7_siting.py --stage hubecon --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot
+# r7_analyse: about 10 min (design 3.2 estimate)
+r7_analyse	4	r7_restricted,r7_written,r7_oos,r7_compliance,r7_hubecon	python3 experiments/r7_siting.py --stage analyse --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot

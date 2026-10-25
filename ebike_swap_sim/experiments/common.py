@@ -139,10 +139,57 @@ FAMILIES: Dict[str, Dict[str, Any]] = {
     "nyc4h_stress2": {"builder": "nyc", **_sites_nyc.STRESS2_PARAMS},
 }
 
+# ---------------------------------------------------------------------------
+# R5 sizes (round 5: notes/reading_to_model.md; DECISIONS.md "R5 implementation notes")
+# ---------------------------------------------------------------------------
+# Probe of the integrate step (seed 0, Threads 3, TimeLimit 300 s, Seed 0, reachable pruning; numbers in
+# DECISIONS "R5 implementation notes"; plan items M5, A6, O1):
+# * r5_stress4h, 6 bikes / 48 orders / H 48 / L 24: 3.14 M per-bike arcs; aggregated ILP (O1) OPTIMAL
+#   750.21 USD in 75 s (512 k variables), per-bike ILP TIME_LIMIT with a 33.8 % gap -> the round-5
+#   single-ILP family, always with R5_ILP_KWARGS (aggregate=True).  Battery side binds (LP shadow price
+#   of a spare 0.27-0.28 USD per site, 55 stock-out slot-sites in the optimum, baseline served 0.896).
+# * r5_stress4h_k8, 8 bikes / 64 orders: 4.83 M arcs; aggregated ILP gap 1.39 % at 300 s (use 600 s
+#   and report the gap); LP shadow prices 7.6-8.5 USD per spare, 7.2-11.1 USD per charger per site,
+#   baseline served 0.688 vs ILP 0.953 -> the battery-binding headline (A6, M9, M10, A5).
+# * r5_stress4h_k10, 10 bikes / 80 orders: 6.93 M arcs; aggregated gap 3.45 % at 300 s; A6 fleet cell only.
+# * r5_stress8h, 8 h lunch + dinner, 6 bikes / 96 orders: rolling horizon is the operating mode (M7; seed 0,
+#   W 24, k 6, lambda 10 min: 2060-2139 USD in 120 s vs baseline 2470); the single aggregated ILP is the E7
+#   offline reference (1526.57 USD, gap 1.86 % at 300 s -> 600 s).  8 / 10 bikes: aggregated gap 48.5 % /
+#   no incumbent, so larger 8 h fleets are rolling only.
+# * r5_manhattan (E9, built by sites_nyc, not registered here): 8 bikes / 40 orders, one-site layout
+#   OPTIMAL in 32 s, three-site layout gap 1.6 % at 300 s (aggregated, open-sites libraries).
+R5_FAMILY_NAMES: Tuple[str, ...] = tuple(gen.R5_FAMILIES)
+#: Round-5 experiment sizes (family -> ``make_r5_instance`` overrides): ``r5_stress4h`` = the
+#: single-ILP family (6 bikes / 48 orders / H 48 / L 24, aggregated ILP O1), the fleet cells of
+#: the A6 sweep at 8 and 10 bikes, and the 8 h lunch + dinner family (rolling horizon M7).
+R5_SIZES: Dict[str, Dict[str, Any]] = {
+    "r5_stress4h": {"r5_family": "r5_stress4h"},
+    "r5_stress4h_k8": {"r5_family": "r5_stress4h", "n_bikes": 8},
+    "r5_stress4h_k10": {"r5_family": "r5_stress4h", "n_bikes": 10},
+    "r5_stress8h": {"r5_family": "r5_stress8h"},
+}
+#: Pruning of the round-5 synthetic families: :data:`PRUNING_DEFAULTS` with reachable pruning
+#: (lossless, R2 probe), which keeps r5_stress4h at about 3.1 M per-bike arcs.
+R5_PRUNING: Dict[str, Any] = {"reachable": True}
+#: ILP switches of the round-5 single-ILP experiments (O1 aggregated flow; equivalent model).
+R5_ILP_KWARGS: Dict[str, Any] = {"aggregate": True}
+#: Gurobi TimeLimit (s) per round-5 single-ILP cell (gap reported when not OPTIMAL).
+R5_TIME_LIMITS: Dict[str, float] = {"r5_stress4h": 300.0, "r5_stress4h_k8": 600.0, "r5_stress4h_k10": 600.0,
+                                    "r5_stress8h": 600.0}   # r5_stress8h: offline reference of E7 only
+#: Single-ILP family (certified optimum) and battery-binding headline family of round 5.
+R5_MAIN_FAMILY = "r5_stress4h"
+R5_BATTERY_HEADLINE = "r5_stress4h_k8"
+#: Families operated through the rolling-horizon wrapper (M7); their single ILP is only the E7 offline reference.
+R5_ROLLING_ONLY: Tuple[str, ...] = ("r5_stress8h",)
+for _name, _kw in R5_SIZES.items():
+    FAMILIES[_name] = {"builder": "r5", **_kw}
+
 #: Families generated in round-2 mode of :func:`ebike_swap_sim.generator.make_synthetic_instance`
-#: (``window_h`` / ``orders_per_bike_hour`` knobs instead of ``n_orders`` / ``H``) or by
-#: :func:`ebike_swap_sim.data_nyc.make_nyc_instance`.
-R2_FAMILIES = ("usd4h", "usd4h_large", "usd8h", "usd4h_toyunits", "nyc4h", "nyc4h_stress", "nyc4h_stress2")
+#: (``window_h`` / ``orders_per_bike_hour`` knobs instead of ``n_orders`` / ``H``), by
+#: :func:`ebike_swap_sim.data_nyc.make_nyc_instance` or (round 5) by
+#: :func:`ebike_swap_sim.generator.make_r5_instance`.
+R2_FAMILIES = ("usd4h", "usd4h_large", "usd8h", "usd4h_toyunits", "nyc4h", "nyc4h_stress", "nyc4h_stress2",
+               *R5_SIZES)
 
 #: Arc-builder pruning recommended by the plan (``generator.default_pruning``).
 PRUNING_DEFAULTS: Dict[str, Any] = {"tau_max": 4, "start_slack": 6, "reachable": False}
@@ -191,6 +238,12 @@ BASELINE_VARIANTS: Dict[str, Dict[str, Any]] = {
     "baseline_zone": {"dispatch_scope": "zone"},
     "baseline_reserve": {"end_reserve_window": "W", "late_threshold_window": "W"},
     "baseline_informed": {"stock_aware_site": True, "late_threshold_window": "W"},
+    # round 5 (plan items M2-M4; ``baseline.BASELINE_VARIANTS``): range-aware + reservation swap
+    # rule, cost-aware zero-sum transfers, logit station choice, and the combined 'r5' rule
+    "baseline_r5": dict(bl.BASELINE_VARIANTS["r5"]),
+    "baseline_r5_range": dict(bl.BASELINE_VARIANTS["r5_range"]),
+    "baseline_r5_transfer": dict(bl.BASELINE_VARIANTS["r5_transfer"]),
+    "baseline_r5_selfish": dict(bl.BASELINE_VARIANTS["r5_selfish"]),
 }
 #: Baseline variants tried, in order, by :func:`feasible_mip_start` when the default
 #: baseline schedule violates one of the report-only families (9)/(17)/(18) and would
@@ -226,6 +279,11 @@ def make_instance(family: str, seed: int = 0, **overrides: Any) -> Instance:
         if builder == "nyc":
             from ebike_swap_sim import data_nyc
             inst = data_nyc.make_nyc_instance(seed=seed, name=name, **kw)
+        elif builder == "r5":
+            r5_family = kw.pop("r5_family", family)
+            inst = gen.make_r5_instance(r5_family, seed=seed, name=name, **kw)
+            rolling_only = rolling_only or bool(inst.meta.get("rolling_horizon_only"))
+            inst.meta["r5_family"] = r5_family
         else:
             inst = gen.make_synthetic_instance(seed=seed, name=name, **kw)
     inst.meta["family"] = family
@@ -242,10 +300,13 @@ def pruning_for(inst: Instance, **overrides: Any) -> Dict[str, Any]:
     'facilities'}``) passed to :func:`ebike_swap_sim.generator.default_pruning`;
     ``targets='facilities'`` restricts ``reposition_targets`` to facility and depot
     nodes.  The toy and p.7 instances are built unpruned (``{}``) so that the
-    documented arc counts are reproduced."""
+    documented arc counts are reproduced.  Round-5 synthetic instances (``meta['r5']``,
+    built by ``generator.make_r5_instance``) add :data:`R5_PRUNING` (reachable pruning)."""
     if inst.meta.get("family") in ("toy", "p7") or not inst.meta.get("restaurants"):
         return {}
     base = PRUNING_NYC if inst.meta.get("semi_real") else PRUNING_DEFAULTS
+    if inst.meta.get("r5") and not inst.meta.get("semi_real"):
+        base = {**base, **R5_PRUNING}          # round 5 synthetic families (R5 sizes)
     kw = {**base, **overrides}
     pr = gen.default_pruning(inst, tau_max=kw["tau_max"], start_slack=kw["start_slack"],
                              reachable=kw["reachable"])
@@ -298,15 +359,114 @@ def relax_end_targets(inst: Instance) -> Instance:
     relaxed copy and no explicit reserve was given, which reproduces the written
     schedule exactly; the row records ``policy_reserve_source = 'written_R_end'``.
     (The ``baseline_reserve`` variant's end-window rule reads ``f.R_end`` directly and
-    is a no-op on the copy; it is only a MIP-start fallback there.)"""
-    out = copy.deepcopy(inst)
-    out.meta["written_R_end"] = {f.id: int(f.R_end) for f in out.facilities}
-    out.meta["written_rho"] = float(out.rho)
-    out.rho = 0.0
-    for f in out.facilities:
-        f.R_end = 0
-    out.reindex()
+    is a no-op on the copy; it is only a MIP-start fallback there.)
+
+    Round 5 (plan item M1): the copy is exactly the ``rho0_R0`` cell of
+    :func:`boundary_grid` (built by the same :func:`end_target_copy`), and its meta
+    carries ``boundary_variant = 'rho0_R0'`` and ``compare_with_end_adjust = True``:
+    since the relaxed ILP may leave stock and bikes emptier than the written model,
+    comparisons on the copy should use ``evaluate.cost(...)['total_end_adjusted']``
+    (``total + C_end_adjust``), which :func:`run_pair` reports next to ``total``.
+    ``written_R_end`` / ``written_rho`` are kept from an earlier copy if ``inst`` is
+    itself a relaxed or boundary copy (otherwise they are ``inst``'s values, as before)."""
+    out = end_target_copy(inst, rho=0.0, R_end=0, label="rho0_R0", swap_only_zero=True)
     out.meta["relax_end_targets"] = True
+    return out
+
+
+# ---------------------------------------------------------------------------
+# M1 boundary handling (round 5)
+# ---------------------------------------------------------------------------
+#: Network recovery shares ``rho`` (18) of the M1 boundary grid.
+BOUNDARY_RHOS: Tuple[float, ...] = (0.0, 0.25, 0.5, 1.0)
+#: Local full-battery targets ``R_end_j`` (17) of the M1 boundary grid (at ``j in S cap C``).
+BOUNDARY_R_ENDS: Tuple[int, ...] = (0, 1)
+#: Label of the periodic bracket (``rho = 1``, ``R_end_j = B_j``).
+PERIODIC_LABEL = "periodic"
+
+
+def boundary_label(rho: float, R_end: Any) -> str:
+    """Label of one M1 boundary cell, e.g. ``'rho0.25_R1'``; ``R_end = 'B'`` with
+    ``rho = 1`` is the periodic bracket (:data:`PERIODIC_LABEL`)."""
+    if R_end == "B":
+        return PERIODIC_LABEL if float(rho) == 1.0 else f"rho{float(rho):g}_RB"
+    return f"rho{float(rho):g}_R{int(R_end)}"
+
+
+def end_target_copy(inst: Instance, rho: float, R_end: Any, label: Optional[str] = None,
+                    swap_only_zero: bool = True) -> Instance:
+    """Deep copy of ``inst`` with the end targets (17)-(18) set by parameters only
+    (plan item M1; E2 (17) ``n_jLH >= R_end_j y_j``, (18) ``sum_j n_jLH >= rho sum_j B_j``).
+
+    * ``rho`` -> ``inst.rho`` (18).
+    * ``R_end`` (int) -> ``R_end_j`` at every swap- AND charge-capable site
+      ``j in S cap C``; ``R_end = 'B'`` sets ``R_end_j = B_j`` there (periodic bracket;
+      with the all-full start (16), (24) and ``rho = 1`` this forces ``n_jqH = n_jq0``
+      at those sites). A site whose ``B_j`` is free (``Facility.B is None``) cannot take
+      ``R_end_j = B_j`` as data; it gets ``R_end_j = 0`` and is listed in
+      ``meta['boundary_free_B']``.
+    * ``swap_only_zero`` (default, every M1 variant): ``R_end_j = 0`` at swap-only
+      sites ``j in S \\ C``, which cannot recharge -- any positive target there is met
+      only by shuttling full batteries in (the 'price of recovery' of IJCAI-25 /
+      brief Issue 3). In the periodic bracket the swap-only sites are therefore held
+      only by the network share ``rho = 1``, not site by site.
+    * Charge-only hubs ``j in C \\ S`` get ``R_end_j = 0`` ((17) is written for
+      ``j in S`` only, so this changes nothing in E2; it matches :func:`relax_end_targets`).
+
+    Meta: ``boundary_variant`` (label, default :func:`boundary_label`), ``boundary``
+    (``rho``, ``R_end``, ``periodic``, ``swap_only_zero``), ``written_R_end`` /
+    ``written_rho`` (kept from ``inst`` if it is already a copy; read by
+    :func:`run_baseline_case` so the policy keeps its written DEMAND_AWARE reserve
+    across all variants) and ``compare_with_end_adjust = True``. Nothing else changes
+    (orders, bikes, routes, services, options), so one demand hash serves the grid."""
+    out = copy.deepcopy(inst)
+    out.meta.setdefault("written_R_end", {f.id: int(f.R_end) for f in inst.facilities})
+    out.meta.setdefault("written_rho", float(inst.rho))
+    out.rho = float(rho)
+    free_B: List[Any] = []
+    for f in out.facilities:
+        if not f.swap or (swap_only_zero and not f.charge):
+            f.R_end = 0
+        elif R_end == "B":
+            if f.B is None:
+                f.R_end = 0
+                free_B.append(f.id)
+            else:
+                f.R_end = int(f.B)
+        else:
+            f.R_end = int(R_end)
+    out.reindex()
+    out.meta["boundary_variant"] = label or boundary_label(rho, R_end)
+    out.meta["boundary"] = {"rho": float(rho), "R_end": R_end, "periodic": R_end == "B" and float(rho) == 1.0,
+                            "swap_only_zero": bool(swap_only_zero)}
+    if free_B:
+        out.meta["boundary_free_B"] = free_B
+    out.meta["compare_with_end_adjust"] = True
+    return out
+
+
+def boundary_grid(inst: Instance, rhos: Sequence[float] = BOUNDARY_RHOS,
+                  r_ends: Sequence[int] = BOUNDARY_R_ENDS, periodic: bool = True,
+                  swap_only_zero: bool = True) -> List[Tuple[str, Instance]]:
+    """M1 boundary grid: ``[(label, copy), ...]`` of :func:`end_target_copy` for every
+    ``rho in rhos`` x ``R_end in r_ends`` (default ``{0, 0.25, 0.5, 1} x {0, 1}``, 8
+    cells, labels ``'rho0_R0' ... 'rho1_R1'``) plus, with ``periodic``, the bracket
+    ``rho = 1``, ``R_end_j = B_j`` (label ``'periodic'``) -- 9 copies by default.
+
+    ``R_end_j = 0`` is forced at swap-only sites ``j in S \\ C`` in EVERY variant
+    (``swap_only_zero``; see :func:`end_target_copy`). The ``'rho0_R0'`` cell equals
+    :func:`relax_end_targets` (the headline control); the written targets are one of
+    the cells (``rho 0.5``, ``R_end 1`` in the round-2+ families), and the others give
+    the 'price of recovery'. Compare variants with ``total_end_adjusted`` (M1 end-state
+    adjustment of ``evaluate.cost``), not with ``total``. Only parameters change; E2
+    (17)-(18) are untouched."""
+    out: List[Tuple[str, Instance]] = []
+    for rho in rhos:
+        for r in r_ends:
+            lab = boundary_label(rho, r)
+            out.append((lab, end_target_copy(inst, rho, r, lab, swap_only_zero=swap_only_zero)))
+    if periodic:
+        out.append((PERIODIC_LABEL, end_target_copy(inst, 1.0, "B", PERIODIC_LABEL, swap_only_zero=swap_only_zero)))
     return out
 
 
@@ -417,14 +577,37 @@ def _facility_vars(inst: Instance, sched: Schedule):
 
 def flatten_cost(c: Dict[str, Any], prefix: str = "") -> Dict[str, float]:
     """Flatten an ``evaluate.cost`` dict ((26)-(32)) into scalar columns
-    ``<prefix>total, <prefix>C_travel, ..., <prefix>unserved/response/lateness``."""
+    ``<prefix>total, <prefix>C_travel, ..., <prefix>unserved/response/lateness``; since
+    round 5 also ``C_end_adjust``, ``C_end_adjust_station`` / ``C_end_adjust_bikes`` and
+    ``total_end_adjusted`` (M1 end-state adjustment, never part of ``total``)."""
     out: Dict[str, float] = {}
     for key, val in c.items():
         if key == "C_orders_parts":
             for part, pv in val.items():
                 out[f"{prefix}{part}"] = pv
+        elif key == "C_end_adjust_parts":   # M1 split (reported, not part of (26))
+            out[f"{prefix}C_end_adjust_station"] = val.get("station")
+            out[f"{prefix}C_end_adjust_bikes"] = val.get("bikes")
         elif isinstance(val, (int, float)):
             out[f"{prefix}{key}"] = val
+    return out
+
+
+def flatten_r5(met: Optional[Dict[str, Any]], prefix: str = "") -> Dict[str, Any]:
+    """Flat columns ``<prefix>r5_<key>`` of the A3 metric pack (``metrics(...)['r5']``,
+    :func:`ebike_swap_sim.evaluate.metric_pack`; plan item A3) for CSV records: every
+    scalar of :data:`ebike_swap_sim.evaluate.R5_SCALAR_KEYS` plus the small dict / list
+    entries ``sbur``, ``kwh_by_price``, ``peak_kw_by_price``, ``swaps_per_slot`` (JSON-
+    encoded by :func:`records_to_frame`).  ``met`` may be a full ``metrics`` dict or the
+    ``r5`` sub-dict; ``None`` gives ``{}``."""
+    from ebike_swap_sim.evaluate import R5_SCALAR_KEYS
+    if not met:
+        return {}
+    r5 = met.get("r5", met)
+    out: Dict[str, Any] = {f"{prefix}r5_{k}": r5.get(k) for k in R5_SCALAR_KEYS}
+    for k in ("sbur", "kwh_by_price", "peak_kw_by_price"):
+        out[f"{prefix}r5_{k}"] = {str(j): v for j, v in (r5.get(k) or {}).items()}
+    out[f"{prefix}r5_swaps_per_slot"] = list(r5.get("swaps_per_slot") or [])
     return out
 
 
@@ -474,10 +657,16 @@ def run_baseline_case(inst: Instance, lib: ArcLibrary, params: Any = None,
     report_only`` is True when the only reported families are
     :data:`BASELINE_REPORT_ONLY` ((9), (17), (18)), which the policy reports but
     does not enforce (DECISIONS.md).
+
+    On a :func:`relax_end_targets` copy or any M1 :func:`boundary_grid` copy
+    (``meta['boundary_variant']``) the policy keeps the written DEMAND_AWARE reserve
+    ``meta['written_R_end']`` unless ``params`` sets ``charge_reserve``, so the policy
+    under test is the same in every boundary variant.
     """
     p = bl.BaselineParams.coerce(params)
     reserve_source = "params" if p.charge_reserve is not None else "R_end"
-    written = inst.meta.get("written_R_end") if inst.meta.get("relax_end_targets") else None
+    written = (inst.meta.get("written_R_end")
+               if (inst.meta.get("relax_end_targets") or inst.meta.get("boundary_variant")) else None)
     if written and p.charge_reserve is None:
         # fairness review F1: DEMAND_AWARE reserves R_end_j y_j (R2.3).  On a relax_end_targets
         # copy (R_end 0) keep the WRITTEN reserve so the policy under test is the same policy
@@ -601,7 +790,12 @@ def run_pair(inst: Instance, pruning: Optional[Dict[str, Any]] = None,
     ``baseline_late_suppressed`` (where the shared pruning bound the policy, fairness
     review F4), ``baseline_policy_reserve_source``, ``n_unservable`` and
     ``*_served_share_servable`` (orders no method can serve, fairness review F5),
-    ``mip_start_fallback_errors`` and ``demand_md5``.  With ``start_fallback`` (default) the MIP start is
+    ``mip_start_fallback_errors`` and ``demand_md5``.  Round 5: the cost columns include
+    ``*_C_end_adjust`` and ``*_total_end_adjusted`` (M1, not part of (26)), the gaps on
+    the end-adjusted totals are ``gap_vs_baseline_pct_end_adjusted`` /
+    ``gap_vs_ilp_pct_end_adjusted``, the A3 metric pack is flattened by :func:`flatten_r5`
+    into ``baseline_r5_*`` / ``ilp_r5_*``, and ``boundary_variant`` names the M1 cell
+    (``'written'`` for an unmodified instance).  With ``start_fallback`` (default) the MIP start is
     chosen by :func:`feasible_mip_start` (``mip_start_variant`` records which policy
     schedule was injected: ``'default'`` or one of :data:`MIP_START_FALLBACKS`); the
     baseline columns always describe the ``baseline_params`` policy.  With ``keep_schedules`` the
@@ -668,10 +862,17 @@ def run_pair(inst: Instance, pruning: Optional[Dict[str, Any]] = None,
         rec["ilp_le_baseline"] = ilp_rec["cost"]["total"] <= base["cost"]["total"] + 1e-6
         rec["baseline_gap_pct"] = 100.0 * (base["cost"]["total"] - ilp_rec["cost"]["total"]) / max(1e-9, abs(ilp_rec["cost"]["total"]))
         rec.update(gap_definitions(base["cost"]["total"], ilp_rec["cost"]["total"]))
+        rec.update({f"{k}_end_adjusted": v for k, v in
+                    gap_definitions(base["cost"].get("total_end_adjusted"),
+                                    ilp_rec["cost"].get("total_end_adjusted")).items()})
+        rec.update(flatten_r5(ilp_rec["metrics"], "ilp_"))
     else:
         rec["ilp_le_baseline"] = None
         rec["baseline_gap_pct"] = None
         rec.update(gap_definitions(None, None))
+        rec.update({f"{k}_end_adjusted": v for k, v in gap_definitions(None, None).items()})
+    rec.update(flatten_r5(base["metrics"], "baseline_"))
+    rec["boundary_variant"] = inst.meta.get("boundary_variant", "written")
     if keep_schedules:
         rec["_baseline"] = base
         rec["_ilp"] = ilp_rec
@@ -1047,6 +1248,8 @@ __all__ = [
     "FAMILIES", "R2_FAMILIES", "PRUNING_DEFAULTS", "PRUNING_NYC", "OUTPUT_ROOT", "THREADS", "DEFAULT_TIME_LIMIT",
     "BASELINE_REPORT_ONLY", "BASELINE_VARIANTS", "MIP_START_FALLBACKS", "END_WINDOW_SLACK", "end_window",
     "baseline_variant_params", "feasible_mip_start", "relax_end_targets", "gap_definitions",
+    "end_target_copy", "boundary_grid", "boundary_label", "BOUNDARY_RHOS", "BOUNDARY_R_ENDS",
+    "PERIODIC_LABEL", "flatten_r5",
     "unservable_orders", "demand_key", "demand_md5", "baseline_pruning_flags", "pair_anomalies",
     "make_instance", "pruning_for", "build_library",
     "family_counts", "check_identity_24", "flatten_cost", "inventory_table",

@@ -1,0 +1,116 @@
+{
+ "lanes": [
+  {
+   "name": "r7_setup",
+   "threads": 12,
+   "after": "-",
+   "stage": "setup",
+   "command": "python3 experiments/r7_siting.py --stage setup --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 80
+  },
+  {
+   "name": "r7_comparison",
+   "threads": 12,
+   "after": "r7_setup",
+   "stage": "comparison",
+   "command": "python3 experiments/r7_siting.py --stage comparison --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 240
+  },
+  {
+   "name": "r7_m1",
+   "threads": 12,
+   "after": "r7_comparison",
+   "stage": "m1",
+   "command": "python3 experiments/r7_siting.py --stage m1 --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 210
+  },
+  {
+   "name": "r7_bb2",
+   "threads": 12,
+   "after": "r7_m1",
+   "stage": "bb2",
+   "command": "python3 experiments/r7_siting.py --stage bb2 --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 600
+  },
+  {
+   "name": "r7_bb3",
+   "threads": 12,
+   "after": "r7_bb2",
+   "stage": "bb3",
+   "command": "python3 experiments/r7_siting.py --stage bb3 --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 240
+  },
+  {
+   "name": "r7_polish",
+   "threads": 12,
+   "after": "r7_bb3",
+   "stage": "polish",
+   "command": "python3 experiments/r7_siting.py --stage polish --out-dir outputs/r7_siting --lp-workers 5 --lp-threads 2 --threads 3 --price-workers 4 --master-threads 2 --max-threads 12 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 90
+  },
+  {
+   "name": "r7_restricted",
+   "threads": 4,
+   "after": "r7_polish",
+   "stage": "restricted",
+   "command": "python3 experiments/r7_siting.py --stage restricted --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 40
+  },
+  {
+   "name": "r7_written",
+   "threads": 4,
+   "after": "r7_polish",
+   "stage": "written",
+   "command": "python3 experiments/r7_siting.py --stage written --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 150
+  },
+  {
+   "name": "r7_oos",
+   "threads": 4,
+   "after": "r7_polish",
+   "stage": "oos",
+   "command": "python3 experiments/r7_siting.py --stage oos --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 120
+  },
+  {
+   "name": "r7_compliance",
+   "threads": 4,
+   "after": "r7_polish",
+   "stage": "compliance",
+   "command": "python3 experiments/r7_siting.py --stage compliance --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 30
+  },
+  {
+   "name": "r7_hubecon",
+   "threads": 4,
+   "after": "r7_polish",
+   "stage": "hubecon",
+   "command": "python3 experiments/r7_siting.py --stage hubecon --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 80
+  },
+  {
+   "name": "r7_analyse",
+   "threads": 4,
+   "after": "r7_restricted,r7_written,r7_oos,r7_compliance,r7_hubecon",
+   "stage": "analyse",
+   "command": "python3 experiments/r7_siting.py --stage analyse --out-dir outputs/r7_siting --lp-workers 1 --lp-threads 2 --threads 3 --price-workers 1 --master-threads 2 --max-threads 4 --scenarios 12 --held-out --family manhattan_dot --approach-radius 14 --max-rss-gb 100.0 --restrict dot",
+   "expected_wall_min": 10
+  }
+ ],
+ "vcpu": 16,
+ "physical_cores": 8,
+ "usable_threads": 12,
+ "lp_threads_total": 12,
+ "ilp_threads_total": 12,
+ "lp_workers": 5,
+ "price_workers": 4,
+ "expected_wall_min_sum": 1890,
+ "critical_path_min": 1620,
+ "parallel_lane_threads": {
+  "r7_restricted": 4,
+  "r7_written": 4,
+  "r7_oos": 4,
+  "r7_compliance": 4,
+  "r7_hubecon": 4
+ }
+}

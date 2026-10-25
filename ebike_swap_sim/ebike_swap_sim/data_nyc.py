@@ -75,6 +75,8 @@ __all__ = [
     "assumed_hourly_profile", "period_shares", "compare_counter_profile",
     "COST_VARIANTS", "cost_variant_params", "NYC_FACILITIES_SPEC", "NYC_DEMAND_SPEC",
     "busiest_restaurant_cells", "make_nyc_instance",
+    "MANHATTAN_BOX", "MANHATTAN_ENTRY_POINTS", "MANHATTAN_NORTH_ENTRY", "StudyRegion", "RegionZoneWeights",
+    "MANHATTAN_S110", "REGIONS", "resolve_region", "region_restaurants", "entry_point_depots",
 ]
 
 # ---------------------------------------------------------------------------
@@ -946,7 +948,7 @@ def compare_counter_profile(counter: Optional[Dict[str, List[float]]] = None,
 # ---------------------------------------------------------------------------
 # 5. cost variants (R2.1) and the semi-real instance builder (R2.2 / R2.4)
 # ---------------------------------------------------------------------------
-COST_VARIANTS: Tuple[str, ...] = ("toy", "usd_A", "usd_sunk", "usd_B", "usd_low", "usd_high")
+COST_VARIANTS: Tuple[str, ...] = ("toy", "usd_A", "usd_sunk", "usd_B", "usd_low", "usd_high", "usd_r6")
 
 #: R2.2 co-located site defaults (generator spec overridden: B = 3, C = 2; K 8, M 1,
 #: sigma 1, P 4 kW, grid 8 kW / 6 kW 18-20 h kept from the generator defaults).
@@ -1050,7 +1052,8 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
                       pruning: Optional[Dict[str, Any]] = None,
                       paths: Optional[Dict[str, str]] = None,
                       name: Optional[str] = None,
-                      depots: Optional[Sequence[Any]] = None) -> Instance:
+                      depots: Optional[Sequence[Any]] = None,
+                      region: Union[None, str, "StudyRegion"] = None) -> Instance:
     """Semi-real NYC E2 instance (R2.4) with the R2.2 instance-family conventions
     and the R2.1 ``cost_variant`` switch.
 
@@ -1060,6 +1063,16 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
     (``depots = site_nodes``), so ``nyc4h`` is byte-identical.  Depot nodes are added to
     ``V`` after the sites; the random stream is untouched, so the orders and the bikes'
     ``q0`` of a seed do not depend on ``depots`` or on ``site_latlon``.
+
+    ``region`` (round 5, plan item M6): a :class:`StudyRegion` (or its name in
+    :data:`REGIONS`, e.g. ``'manhattan_s110'``) restricting the demand side to the region
+    inside its box: customers are drawn only where :class:`RegionZoneWeights` is positive
+    (the region's boroughs, south of its northern street) and restaurants only from the
+    region's DOHMH rows (:meth:`StudyRegion.filter_restaurants`).  ``box`` defaults to the
+    region's box.  ``None`` (default) keeps every existing family byte-identical (no new
+    ``meta`` / ``params`` keys); with a region ``meta['region']`` and
+    ``meta['params']['region']`` are recorded.  The random stream is consumed in the same
+    order as without a region.
 
     Pipeline (mirrors ``generator.make_synthetic_instance``, reusing its helpers
     ``build_route_library``, ``TimeDependentGenerator`` and spec merging):
@@ -1094,7 +1107,10 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
     Deterministic for a given ``seed`` (one ``numpy`` generator; Zipf ranks drawn
     first); the result validates and round-trips through JSON.
     """
-    box = box or DEFAULT_BOX
+    reg = resolve_region(region) if region is not None else None
+    if reg is not None and box is not None and box.to_dict() != reg.box.to_dict():
+        raise ValueError("make_nyc_instance: box and region.box differ; pass one of them")
+    box = box or (reg.box if reg is not None else None) or DEFAULT_BOX
     paths = {**DEFAULT_PATHS, **(paths or {})}
     fac_spec = _merge(NYC_FACILITIES_SPEC, facilities_spec)
     dem = _merge(NYC_DEMAND_SPEC, demand_spec)
@@ -1118,6 +1134,8 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
     # 2. zone weights + destination sampler -----------------------------------
     if zone_weights is None:
         zone_weights = default_zone_weights(box, paths)
+    if reg is not None:
+        zone_weights = RegionZoneWeights(zone_weights, reg)
     zw_source = getattr(zone_weights, "source", type(zone_weights).__name__)
     zw_warning = getattr(zone_weights, "warning", None)
     zw_meta_fn = getattr(zone_weights, "meta", None)
@@ -1132,13 +1150,16 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
         if bad:
             raise ValueError(f"cuisine_map_overrides map to unknown classes {sorted(bad)}")
         rest_df = restaurants_in_box(box)
+        if reg is not None:
+            rest_df = reg.filter_restaurants(rest_df)
         rest_df["kaggle_class"] = rest_df["cuisine"].map(lambda c: cmap.get(c, "other"))
         restaurant_sampler = NYCRestaurantSampler(
             box, rng, paths["kaggle"], restaurants=rest_df,
             radius_m=float(dem.get("radius_m", 2500.0)), prep_range_min=tuple(dem["prep_range_min"]))
     rest = restaurant_sampler or NYCRestaurantSampler(
         box, rng, paths["kaggle"], radius_m=float(dem.get("radius_m", 2500.0)),
-        prep_range_min=tuple(dem["prep_range_min"]))
+        prep_range_min=tuple(dem["prep_range_min"]),
+        restaurants=(reg.filter_restaurants(restaurants_in_box(box)) if reg is not None else None))
     restaurants_df = rest.df
     # unreachable supply (units review F3): rows whose class has no Kaggle share
     n_unmapped = int((restaurants_df["kaggle_class"] == "other").sum()) if "kaggle_class" in restaurants_df else 0
@@ -1189,8 +1210,11 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
                         "value": (profile if isinstance(profile, str) else
                                   _py(profile) if isinstance(profile, (dict, list, tuple)) else
                                   getattr(profile, "__name__", "callable"))}
+    day_type = str(dem.get("day_type") or "weekday")       # R7: 'weekend' selects the weekend shape of a block profile
+    if day_type not in ("weekday", "weekend"):
+        raise ValueError("demand_spec['day_type'] must be 'weekday' or 'weekend'")
     release_gen = TimeDependentGenerator(profile, (window_start, window_start + release_span_h),
-                                         float(max(n_orders, 1)))
+                                         float(max(n_orders, 1)), day_type=day_type)
     minutes = release_gen.sample(rng, n_orders) if n_orders > 0 else []
     promise_slots = int(math.ceil(float(dem["promise_after_ready_min"]) / Delta_min - 1e-9))
     plat_names = list(dem["platforms"].keys())
@@ -1300,6 +1324,7 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
             "Delta_min": Delta_min, "L": L, "battery_wh": battery_wh, "eta": eta,
             "tail_slots": tail, "n_sites": n_sites, "site_min_sep_blocks": site_min_sep_blocks,
             **({"depots": [list(d) for d in depot_nodes]} if depot_nodes else {}),
+            **({"region": reg.name} if reg is not None else {}),
             "facilities_spec": fac_spec, "demand_spec": dem, "physics": phys, "pruning": pruning,
             "restaurant_sampler": {"radius_m": rest.radius_m, "radius_growth": rest.radius_growth,
                                    "min_candidates": rest.min_candidates, "zipf_s": rest.zipf_s,
@@ -1333,6 +1358,7 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
         "zone_mass": _py({str(k): v for k, v in dest.zone_totals().items()}),
         "time_profile": _py(ASSUMED_TIME_PROFILE),
         "hourly_profile_used": _py(profile_used),
+        **({"day_type": day_type} if day_type != "weekday" else {}),
         "window_h": [window_start, window_start + H * disc.Delta_h],
         "release_window_h": [window_start, window_start + release_span_h],
         "restaurants": [[list(n), c] for n, c in
@@ -1347,9 +1373,186 @@ def make_nyc_instance(seed: int = 0, n_bikes: int = 10, window_h: float = 4.0,
         "orders": _py(order_meta),
         "p_ch_kw": disc.p_ch_kw,
     }
+    if reg is not None:
+        meta["region"] = _py(reg.to_dict())
     inst = Instance(disc=disc, nodes=nodes, routes=routes, bikes=bikes, orders=orders,
                     facilities=facilities, services=[], P_grid=P_grid,
                     kappa=float(cost["kappa"]), pi=pi, q_res=int(cost["q_res"]),
                     rho=float(cost["rho"]), options=options, meta=meta)
     inst.validate()
     return inst
+
+
+# ---------------------------------------------------------------------------
+# 6. Round 5 (notes/reading_to_model.md, plan item M6): study regions and rider depots
+# ---------------------------------------------------------------------------
+#: Box around Manhattan south of 110th Street (Battery Park 40.700 N to West 110th Street /
+#: Riverside 40.806 N; Hudson shore -74.020 to East Harlem -73.925).  It contains parts of
+#: New Jersey, Brooklyn and Queens; :data:`MANHATTAN_S110` removes them from the demand
+#: side.  87 x 98 nodes of 150 m in the rotated R2.4 frame (8,526 nodes).
+MANHATTAN_BOX = StudyBox(lat_min=40.698, lat_max=40.807, lon_min=-74.020, lon_max=-73.925)
+
+#: Rider depots of the M6 redesign: the Manhattan-side approaches of the bridges and tunnels
+#: through which outer-borough and New Jersey riders enter (eBaaS Sec. 4.2.1: the value of a
+#: swap network is driven by where riders come from; reading_to_model.md M6).  WGS84
+#: coordinates of the street intersection at the approach, read from public street maps
+#: (approximate, not surveyed: about one 150 m block of uncertainty, which is the snapping
+#: resolution of the grid anyway).
+MANHATTAN_ENTRY_POINTS: Dict[str, Tuple[float, float]] = {
+    "Queensboro Bridge (2nd Ave / E 59th St)": (40.7610, -73.9640),
+    "Williamsburg Bridge (Delancey St / Clinton St)": (40.7184, -73.9860),
+    "Manhattan Bridge (Canal St / Bowery)": (40.7170, -73.9960),
+    "Brooklyn Bridge (Park Row / Centre St)": (40.7123, -74.0037),
+    "Lincoln Tunnel (Dyer Ave / W 40th St)": (40.7585, -73.9955),
+    "Holland Tunnel (Varick St / Broome St)": (40.7240, -74.0065),
+}
+#: Optional northern entry on the region boundary (riders from Harlem and the Bronx):
+#: Frederick Douglass Circle, Central Park West / W 110th St.  Not a default depot.
+MANHATTAN_NORTH_ENTRY: Dict[str, Tuple[float, float]] = {
+    "W 110th St / Central Park West (Frederick Douglass Circle)": (40.7997, -73.9582),
+}
+
+
+@dataclasses.dataclass
+class StudyRegion:
+    """Demand region of a semi-real instance inside a :class:`StudyBox` (plan item M6).
+
+    A point belongs to the region when it lies in ``box``, south of the northern boundary
+    street (rotated-frame ``y <= y_max``; Manhattan streets are lines of constant ``y`` in the
+    R2.4 frame, ``y_max`` is the projection of ``north_limit_latlon`` plus half a block so that
+    nodes on the boundary street are inside) and, for zone lookups, in an NTA whose code
+    starts with one of ``zone_prefixes`` (``'MN'`` = Manhattan, NTA-2020 and NTA-2010 codes).
+    DOHMH rows are kept when their ``boro`` is in ``boroughs`` and their projection is south of
+    the boundary.  Only the demand side (customers, restaurants) is restricted; the synthetic
+    grid still covers the whole box (R2.4 caveat)."""
+    name: str
+    box: StudyBox
+    boroughs: Tuple[str, ...] = ("Manhattan",)
+    zone_prefixes: Tuple[str, ...] = ("MN",)
+    north_limit_latlon: Optional[Tuple[float, float]] = None
+    north_limit_label: str = ""
+    description: str = ""
+
+    @property
+    def y_max(self) -> float:
+        """Northern boundary in rotated-frame metres (``inf`` without a boundary)."""
+        if self.north_limit_latlon is None:
+            return float("inf")
+        return float(self.box.project(*self.north_limit_latlon)[1]) + 0.5 * float(self.box.block_m)
+
+    def in_band(self, lat: float, lon: float) -> bool:
+        """Inside the box and south of the northern boundary (no zone test)."""
+        return self.box.contains(lat, lon) and self.box.project(lat, lon)[1] <= self.y_max + 1e-9
+
+    def node_in_band(self, node: Node) -> bool:
+        """Grid node south of the northern boundary."""
+        return self.box.node_xy(node)[1] <= self.y_max + 1e-9
+
+    def zone_ok(self, code: Optional[str]) -> bool:
+        """Zone code accepted by the region (``zone_prefixes`` empty = any zone)."""
+        if not self.zone_prefixes:
+            return True
+        return code is not None and str(code).startswith(tuple(self.zone_prefixes))
+
+    def filter_restaurants(self, df: pd.DataFrame) -> pd.DataFrame:
+        """DOHMH rows of the region (``boro`` in ``boroughs`` and south of the boundary);
+        expects the output of :func:`restaurants_in_box` on ``self.box``."""
+        keep = df["boro"].isin(list(self.boroughs)) if self.boroughs else pd.Series(True, index=df.index)
+        if "y" in df:
+            keep &= df["y"] <= self.y_max + 1e-9
+        return df.loc[keep].reset_index(drop=True)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"name": self.name, "box": self.box.to_dict(), "boroughs": list(self.boroughs),
+                "zone_prefixes": list(self.zone_prefixes),
+                "north_limit_latlon": (list(self.north_limit_latlon) if self.north_limit_latlon else None),
+                "north_limit_label": self.north_limit_label, "y_max_m": self.y_max,
+                "description": self.description}
+
+
+#: Manhattan south of 110th Street (plan item M6): the E9 candidate region beyond the
+#: Midtown box.  Northern boundary: W 110th St at Central Park West.
+MANHATTAN_S110 = StudyRegion(
+    name="manhattan_s110", box=MANHATTAN_BOX, boroughs=("Manhattan",), zone_prefixes=("MN",),
+    north_limit_latlon=(40.7997, -73.9582), north_limit_label="W 110th St / Central Park West",
+    description="Manhattan south of 110th Street (Battery to Central Park North); DOHMH Manhattan rows "
+                "and Manhattan NTAs only; R2.4 synthetic 150 m grid over the whole box")
+
+#: Named study regions (``make_nyc_instance(region=...)``).
+REGIONS: Dict[str, StudyRegion] = {MANHATTAN_S110.name: MANHATTAN_S110}
+
+
+def resolve_region(region: Union[str, StudyRegion]) -> StudyRegion:
+    """A :class:`StudyRegion` from itself or its name in :data:`REGIONS` (``KeyError`` otherwise)."""
+    if isinstance(region, StudyRegion):
+        return region
+    if region not in REGIONS:
+        raise KeyError(f"unknown study region {region!r}; known: {sorted(REGIONS)}")
+    return REGIONS[region]
+
+
+class RegionZoneWeights:
+    """Zone weights restricted to a :class:`StudyRegion` (plan item M6): the density of the
+    wrapped weights where the point is in the region (box, south of the boundary, accepted
+    zone code), 0 elsewhere; ``zone_at`` returns the code only inside the region, so customer
+    zone labels and the access sets [U4] are region zones.  ``source`` / ``warning`` /
+    ``meta()`` of the wrapped object are passed through (``meta`` gains the region name)."""
+
+    def __init__(self, base: Union[ZoneWeights, Callable[[float, float], float]], region: StudyRegion) -> None:
+        self.base = base
+        self.region = region
+        self._fn = as_zone_weight_fn(base)
+        self._zone_at = getattr(base, "zone_at", None)
+        self.source = getattr(base, "source", type(base).__name__)
+        self.warning = getattr(base, "warning", None)
+
+    def zone_at(self, lat: float, lon: float) -> Optional[str]:
+        if not self.region.in_band(lat, lon) or self._zone_at is None:
+            return None
+        code = self._zone_at(lat, lon)
+        return code if self.region.zone_ok(code) else None
+
+    def weight_at(self, lat: float, lon: float) -> float:
+        if not self.region.in_band(lat, lon):
+            return 0.0
+        if self.region.zone_prefixes:
+            if self._zone_at is None or not self.region.zone_ok(self._zone_at(lat, lon)):
+                return 0.0
+        return float(self._fn(lat, lon))
+
+    def zones(self) -> List[str]:
+        zs = getattr(self.base, "zones", None)
+        return [z for z in (zs() if callable(zs) else []) if self.region.zone_ok(z)]
+
+    def meta(self) -> Dict[str, Any]:
+        fn = getattr(self.base, "meta", None)
+        out = dict(fn()) if callable(fn) else {}
+        out["zone_weights_region"] = self.region.name
+        return out
+
+
+def region_restaurants(region: Union[str, StudyRegion], df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """DOHMH restaurants of a region with local ``x, y`` and the grid ``node`` (plan item M6)."""
+    reg = resolve_region(region)
+    return reg.filter_restaurants(restaurants_in_box(reg.box, df))
+
+
+def entry_point_depots(box: StudyBox = MANHATTAN_BOX, names: Optional[Sequence[str]] = None,
+                       include_north: bool = False) -> List[Node]:
+    """Grid nodes of the rider depots of the M6 redesign: the Manhattan-side approaches of
+    :data:`MANHATTAN_ENTRY_POINTS` (all six by default, in that order; ``names`` selects),
+    plus :data:`MANHATTAN_NORTH_ENTRY` with ``include_north``; snapped to ``box``,
+    deduplicated.  Raises ``ValueError`` when a point lies outside the box."""
+    pts = dict(MANHATTAN_ENTRY_POINTS)
+    if include_north:
+        pts.update(MANHATTAN_NORTH_ENTRY)
+    keys = list(pts) if names is None else list(names)
+    out: List[Node] = []
+    for k in keys:
+        lat, lon = pts[k]
+        if not box.contains(lat, lon):
+            raise ValueError(f"entry point {k!r} lies outside the box")
+        v = box.snap(lat, lon)
+        if v not in out:
+            out.append(v)
+    return out

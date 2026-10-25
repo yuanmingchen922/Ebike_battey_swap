@@ -20,7 +20,7 @@ def _json():
 def test_calibration_file_and_variant_listing():
     assert os.path.exists(cm.DEFAULT_CALIBRATION_PATH)
     names = list(cm.cost_variants())
-    assert names == ["toy", "usd_A", "usd_sunk", "usd_B", "usd_low", "usd_high"]
+    assert names == ["toy", "usd_A", "usd_sunk", "usd_B", "usd_low", "usd_high", "usd_r6"]
     assert all(isinstance(doc, str) and doc for doc in cm.cost_variants().values())
     with pytest.raises(KeyError):
         cm.load_cost_calibration(variant="usd_Z")
@@ -157,3 +157,58 @@ def test_window_scaling_note_on_bB_initial_charge():
     assert eight["costs"]["bB"] == pytest.approx(0.664)          # unchanged (spec as written)
     two = cm.load_cost_calibration(variant="usd_sunk", window_h=2.0)
     assert "-0.106" in two["notes"][0] or "-0.107" in two["notes"][0]
+
+
+# ---------------------------------------------------------------------------
+# round 5 (notes/reading_to_model.md M5, A6, M10): tariffs, allocations, levers
+# ---------------------------------------------------------------------------
+def test_tou_tariff_from_the_json():
+    data = _json()["variants"]["tou_electricity"]
+    tou = cm.load_tariff("tou")
+    assert tou["costs"] == {"pi": data["costs"]["pi"], "pi_peak": data["costs"]["pi_peak"]}
+    assert tou["costs"] == {"pi": 0.132, "pi_peak": 0.442}
+    assert tou["facilities_spec"]["price_peak_hours"] == (8.0, 22.0)
+    assert cm.load_tariff("tou_summer")["costs"]["pi_peak"] == 0.74
+    assert cm.load_tariff("flat")["costs"] == {} and list(cm.TARIFFS) == ["flat", "tou", "tou_summer"]
+    with pytest.raises(KeyError):
+        cm.load_tariff("critical_peak")
+    # the R2.1 variant table is unchanged: pi_peak is None in every variant
+    assert all(cm.load_cost_calibration(variant=v)["costs"]["pi_peak"] is None for v in cm.cost_variants())
+
+
+def test_allocation_reproduces_the_json_setup_costs():
+    assert cm.crf(0.07, 10) == pytest.approx(0.1424, abs=1e-4)
+    assert cm.crf(0.0, 4) == 0.25
+    with pytest.raises(ValueError):
+        cm.crf(0.07, 0)
+    # F_j: capex 50,000, CRF(7 %, 10 y), opex 10,200 -> 12.03 per 4 h; b^C_j: 400 at CRF(7 %, 5 y) + 5 %
+    assert cm.allocate_per_window(50000, 0.07, 10, 10200, 4.0) == pytest.approx(12.03, abs=0.005)
+    assert cm.allocate_per_window(400, 0.07, 5, 20, 4.0) == pytest.approx(0.082, abs=0.001)
+    assert cm.allocate_per_window(400, 0.07, 5, 20, 8.0) == pytest.approx(2 * cm.allocate_per_window(400, 0.07, 5, 20, 4.0))
+    assert cm.position_cost_per_window() == pytest.approx(400 * cm.crf(0.07, 10) / 360 / 4)
+
+
+def test_allocated_bike_cost_and_pack_scaling():
+    a = cm.allocated_bike_cost(4.0)
+    assert a["bike_capex_per_window"] == pytest.approx(1600 * cm.crf(0.07, 3) / 360 / 4)
+    assert a["rider_wage_per_window"] == pytest.approx(22.13 * 4)
+    assert a["allocated_per_bike_window"] == pytest.approx(a["bike_capex_per_window"] + a["rider_wage_per_window"])
+    b = cm.allocated_bike_cost(8.0, include_rider=False, bike_life_years=2.0)
+    assert b["rider_wage_per_window"] == 0.0 and b["parameters"]["bike_life_years"] == 2.0
+    with pytest.raises(KeyError):
+        cm.allocated_bike_cost(4.0, bike_colour=1.0)
+    base = cm.load_cost_calibration(variant="usd_sunk")["costs"]
+    big = cm.pack_cost_scaling(base, 1.2)
+    assert big["bB"] == pytest.approx(2 * base["bB"]) and big["bhat"] == pytest.approx(900.0)
+    assert big["F"] == base["F"] and base["bhat"] == 450.0                 # input not mutated
+    with pytest.raises(ValueError):
+        cm.pack_cost_scaling(base, 0.0)
+
+
+def test_demand_charge_proxy():
+    assert cm.demand_charge_per_window(30.0, 4.0) == pytest.approx(30.0 / 30 * 4 / 16)
+    rows = cm.demand_charge_proxy({0.0: None, 0.5: 100.0, 1.0: 99.9}, 30.0, 4.0, n_sites=2)
+    assert rows["p_dem_per_kw_window"] == pytest.approx(0.25)
+    assert [r["P_kw"] for r in rows["rows"]] == [0.0, 0.5, 1.0] and rows["rows"][0]["total"] is None
+    assert rows["best"]["P_kw"] == 0.5 and rows["best"]["total"] == pytest.approx(100.25)
+    assert cm.demand_charge_proxy({0.0: None}, 30.0)["best"] is None

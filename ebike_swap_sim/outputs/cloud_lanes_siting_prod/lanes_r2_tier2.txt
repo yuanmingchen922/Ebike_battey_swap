@@ -1,0 +1,16 @@
+# R7 siting re-plan after batch 2, Tier 2 (M5 + M4 again) -- written by experiments/r7_search.py --write-lanes --lanes-plan r2
+# CONDITIONAL and NOT chained to lanes_r2.txt: start it by hand only when r2_m3probe_a / _b show a mean bound lift >= 1.0 % over the cell LP at 1,200 s in the better variant (re-plan M5); at most 0.9 gap points (K2.6: D33 caps the floor at 1043.54)
+# the M5 lane uses the default Gurobi params; when variant b (Method 2) was better, regenerate this file with --write-lanes --lanes-plan r2 --ilp-params Method=2
+# precondition: every lane of lanes_r2.txt is done or stopped (no tmux session lanes_dispatch)
+# start: LANES_DIR=$PWD/ebike_swap_sim/outputs/cloud_lanes_siting_prod bash deploy/aws/run_lanes.sh start ebike_swap_sim/outputs/cloud_lanes_siting_prod/lanes_r2_tier2.txt --max-threads 12
+# instance r7i.4xlarge at 1.0584 USD/h, dispatcher budget 12 threads, --max-rss-gb 110 per process; --tol-rel 0.01 everywhere (the analyse stage reports the open_sites gap with tol 0, K2.2)
+# format: name <TAB> threads <TAB> after <TAB> command (bash, from the package root); every lane appends to outputs/r7_siting/cost.jsonl (R7_BATCH)
+# pre-flight: bash deploy/aws/r7_prod_check.sh --no-probe (markers of changes 1-9 and both r2 lane files)
+# total about 3.7 h = 3.9 USD (range 2.9-4.8 h)
+# ---- batch 2b_tier2
+# r2t2_gate: gate, about 0.0 h (0.0-0.0)
+r2t2_gate	1	-	R7_BATCH=2b_tier2 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_gate.py --cost-dir outputs/r7_siting
+# r2t2_m5: M5 Tier 2 bound pass (18 weekday cells, the 2 M3 cells re-used), about 3.2 h (2.5-4.2)
+r2t2_m5	8	r2t2_gate	R7_BATCH=2b_tier2 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_search.py --stage price-list --evaluator in --tier all_candidates --layouts D29:SC:B3:C2 D28:SC:B3:C2 D34:SC:B3:C2 --cells D29:0-5 D28:0-5 D34:0-5 --warm-tier open_sites --cover-rows off --time-limit 1200 --wall 4.5 --lp-workers 1 --lp-threads 1 --master-threads 1 --price-workers 2 --threads 4 --max-threads 8 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot
+# r2t2_m4: M4 again (floor with the Tier 2 cell bounds), about 0.5 h (0.4-0.6)
+r2t2_m4	12	r2t2_m5	R7_BATCH=2b_tier2 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r7_siting.py --stage m1 --m1-pass2 off --max-escalations 0 --wall-m1 1.5 --lp-workers 3 --lp-threads 3 --master-threads 2 --price-workers 1 --threads 1 --max-threads 12 --verify-start unchecked --out-dir outputs/r7_siting --family manhattan_dot --scenarios 12 --approach-radius 14 --max-rss-gb 110 --tol-rel 0.01 --tol-abs 1 --restrict dot

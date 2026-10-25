@@ -22,6 +22,22 @@ shared by every sub-command so a layout priced once is never solved again):
   on seeds 0-4 (3 in-sample + 2 out-of-sample), regret matrices, relaxed-target control.
 * ``--access`` (E9.6): (C) with the planner-only access row [U4] for ``D in {8, 12}`` blocks.
 
+Round-5 sub-commands (``notes/reading_to_model.md``; default family ``r5_manhattan``, the M6
+redesign: Manhattan south of 110th St, 2 km lattice candidates, riders entering at the bridge /
+tunnel approaches, access radius D = 14 blocks anchored to the eBaaS 2 km coverage; lower-level
+ILPs use the aggregated flow O1 when available):
+
+* ``--manhattan`` (M6): region, candidates, depots, access sets and a sizing probe (baseline
+  policy on singletons and rule layouts, one aggregated ILP of a reference layout).
+* ``--baselines`` (A4 i-ii): the IJCAI-15 rules CSCD / CSTC / CSAV at equal budget and the
+  capacity-matched present-day layout, priced under the ILP, the R2.3 baseline and follower E
+  (``selfish``); V against budget.
+* ``--levers`` (A4 iii): the marginal-lever table (+1 spare, +1 charger, +1 swap position, one
+  shuttle, +10 % grid) at a chosen layout under each follower.
+* ``--policy-aware`` (M4): greedy + local search with follower E as the lower level, the chosen
+  layouts cross-evaluated under every follower.
+* ``--compliance`` (M4): compliance sweep (share alpha_c of riders follows the ILP plan).
+
 Conventions of the relaunch: the greedy starts from the best singleton by V (per-role baseline
 screen), discards moves whose lower level is infeasible or serves < ``--min-served`` (0.5),
 reports ``wall budget exhausted`` / ``no feasible layout`` with the status counts of the priced
@@ -72,6 +88,11 @@ from experiments import common as C  # noqa: E402
 
 OUT_ROOT = os.path.join(C.OUTPUT_ROOT, "e9_bilevel")
 SUBS = ("validate", "sweep", "roles", "deck", "cross", "access")
+#: Round-5 sub-commands (new; plan items M6, A4, M4).  Flags use dashes (``--policy-aware``).
+NEW_SUBS = ("manhattan", "baselines", "levers", "policy_aware", "compliance")
+NEW_DEFAULT_FAMILY = S.R5_MANHATTAN_FAMILY
+FOLLOWERS = BL.POLICIES                      # ilp, baseline, selfish (follower E)
+ALPHAS = [0.0, 0.25, 0.5, 0.75, 1.0]
 TIME_LIMIT = 300.0
 TIME_LIMIT_HUB = 600.0
 INTEGRATED_TIME_LIMIT = 600.0
@@ -118,6 +139,11 @@ class Study:
         # reposition targets: the search sub-commands price per-layout libraries (open sites + depots,
         # E8 convention); --validate keeps the all-candidates template so that (A) and (B) share it
         self.reposition = "all_candidates" if sub == "validate" else str(args.reposition)
+        # round-5 sub-commands default to the M6 family and the aggregated lower level (O1);
+        # the earlier sub-commands keep their family default and the per-bike formulation
+        self.is_new = sub in NEW_SUBS
+        self.aggregate: Optional[bool] = ({"on": True, "off": False}.get(args.aggregate) if args.aggregate != "auto"
+                                          else (None if self.is_new else False))
         self.t0 = time.perf_counter()
         if self.smoke:
             self.family = "toy_siting"
@@ -132,13 +158,13 @@ class Study:
             self.time_limit = min(self.time_limit, 30.0)
             self.integrated_time_limit = min(self.integrated_time_limit, 60.0)
         else:
-            self.family = str(args.family)
+            self.family = str(args.family or (NEW_DEFAULT_FAMILY if self.is_new else DEFAULT_FAMILY))
             if self.family not in S.SITING_FAMILIES:
                 raise SystemExit(f"--family must be one of {sorted(S.SITING_FAMILIES)}")
-            self.candidates = S.candidate_sites()
+            self.candidates = S.family_candidates(self.family)     # candidate_sites() for the round-3/4 families
             self.spec = S.DEFAULT_SPEC
             self.budget_unit = BUDGET_UNIT
-            self.size_menu = S.SIZE_MENUS[self.family]
+            self.size_menu = S.SIZE_MENUS.get(self.family, S.SIZE_MENUS[DEFAULT_FAMILY])
             self.validation_grid = list(BL.VALIDATION_GRID)
             self.validation_bounds = {"S": (1, 2, 0, 0), "SC": (1, 2, 1, 1)}
             self.n_bikes = int(args.bikes) if args.bikes else int(S.SITING_FAMILIES[self.family]["n_bikes"])
@@ -159,7 +185,7 @@ class Study:
             if self.smoke:
                 self._scen[key] = S.toy_base_instance(int(seed), n_bikes=nb)
             else:
-                depots = [c.node for c in self.candidates[:3]]      # always the three nyc4h busiest cells
+                depots = S.family_depots(self.family, self.candidates)   # nyc4h: the three busiest cells
                 self._scen[key] = S.make_base_instance(int(seed), cands, family=self.family, depots=depots, n_bikes=nb)
                 if self.spec is S.DEFAULT_SPEC:
                     self.spec = S.spec_from_instance(self._scen[key])
@@ -168,9 +194,13 @@ class Study:
     def evaluator(self, seeds: Sequence[int], n_bikes: Optional[int] = None, relaxed: bool = False,
                   candidates: Optional[Sequence[S.Candidate]] = None) -> BL.LowerLevelEvaluator:
         scen = [self.scenario(s, n_bikes, candidates) for s in seeds]
+        kw: Dict[str, Any] = {}
+        if self.aggregate is not False:
+            kw["aggregate"] = self.aggregate
         return BL.LowerLevelEvaluator(scen, self.spec, time_limit=self.time_limit, time_limit_hub=self.time_limit_hub,
                                       threads=self.threads, params=dict(C.ILP_PARAMS_R3), cache_dir=self.cache_dir,
-                                      relaxed_targets=relaxed, wall=self.wall, verbose=True, reposition=self.reposition)
+                                      relaxed_targets=relaxed, wall=self.wall, verbose=True, reposition=self.reposition,
+                                      **kw)
 
     def greedy_kwargs(self) -> Dict[str, Any]:
         """Relaunch conventions shared by every greedy call."""
@@ -933,12 +963,382 @@ def run_access(study: Study) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Round-5 sub-commands (plan items M6, A4, M4; notes/reading_to_model.md)
+# ---------------------------------------------------------------------------
+def _followers(study: Study) -> List[str]:
+    fol = list(study.args.followers or FOLLOWERS)
+    bad = [f for f in fol if f not in FOLLOWERS]
+    if bad:
+        raise SystemExit(f"--followers must be a subset of {list(FOLLOWERS)} (got {bad})")
+    return fol
+
+
+def _r5_seeds(study: Study) -> List[int]:
+    return [int(s) for s in (study.args.seeds or SEARCH_SEEDS)] if not study.smoke else [0, 1]
+
+
+def _r5_budgets(study: Study, default: Sequence[float]) -> List[float]:
+    return [float(m) for m in (study.args.budgets or default)] if not study.smoke else [1.0, 2.0]
+
+
+def _access_D(study: Study) -> int:
+    if study.args.access_d:
+        return int(study.args.access_d[0])
+    if study.smoke:
+        return 1
+    return int(S.family_access_D(study.family) or S.access_radius_blocks())
+
+
+def _size_caps(study: Study, role: str = "SC") -> Tuple[int, int]:
+    menu = study.size_menu.get(role) or [(study.spec.K, study.spec.c_max(role))]
+    return max(b for b, _c in menu), max(c for _b, c in menu)
+
+
+def _smoke_layout() -> BL.Layout:
+    return BL.Layout.of([("T1", "SC", 1, 1), ("T2", "S", 1, 0)])
+
+
+def _pick_layout(study: Study, subs: Sequence[str]) -> Tuple[Optional[BL.Layout], str]:
+    """Layout for the lever table / compliance sweep: the first ``--layouts`` key, else the
+    ILP-priced layout with the lowest V at the largest budget among the records of ``subs``
+    (greedy / integrated / rule rows), else the toy layout in smoke mode."""
+    if study.args.layouts:
+        return BL.Layout.from_key(study.args.layouts[0]), "cli"
+    rows = [r for r in _chosen_layouts(study, subs) if r.get("V") is not None and r.get("layout")]
+    for sub in ("baselines",):
+        if sub in subs:
+            for r in C.load_jsonl(os.path.join(study.root, sub, "records.jsonl")):
+                if r.get("kind") == "rule_layout" and r.get("policy") == "ilp" and r.get("V") is not None and r.get("layout"):
+                    rows.append({**r, "method": f"rule {r.get('rule')}", "budget_m": r.get("budget_m")})
+    if rows:
+        top = max(float(r.get("budget_m") or 0.0) for r in rows)
+        best = min((r for r in rows if float(r.get("budget_m") or 0.0) == top), key=lambda r: float(r["V"]))
+        return BL.Layout.from_json(best["layout"]), f"{best.get('method')}@m{best.get('budget_m')}"
+    if study.smoke:
+        return _smoke_layout(), "smoke default"
+    return None, "none"
+
+
+def plot_lines(rows: Sequence[Dict[str, Any]], path: str, x: str, y: str, series: Sequence[str], title: str,
+               xlabel: str, ylabel: str) -> str:
+    """Line chart of ``rows`` (one line per combination of the ``series`` keys)."""
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        if r.get(x) is None or r.get(y) is None:
+            continue
+        groups.setdefault(" / ".join(str(r.get(k)) for k in series), []).append(r)
+    for i, (name, rs) in enumerate(sorted(groups.items())):
+        rs = sorted(rs, key=lambda r: float(r[x]))
+        ax.plot([float(r[x]) for r in rs], [float(r[y]) for r in rs], marker="o", color=PALETTE[i % len(PALETTE)],
+                label=name, linewidth=1.6)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontsize=10, loc="left")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=7, frameon=False, ncol=2)
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def run_manhattan(study: Study) -> Dict[str, Any]:
+    """M6: the Manhattan-wide region (south of 110th St), 2 km lattice candidates, entry-point
+    depots, access sets at the eBaaS-anchored radius and a sizing probe of the family."""
+    a = study.args
+    seeds = _r5_seeds(study)
+    D = _access_D(study)
+    plan: Dict[str, Any] = {"sub": "manhattan", **study.plan_common(), "seeds": seeds, "access_D_blocks": D,
+                            "n_candidates": len(study.candidates), "candidates": [c.id for c in study.candidates]}
+    if not study.smoke:
+        from ebike_swap_sim import data_nyc as dn
+        reg = dn.resolve_region(S.R5_MANHATTAN_PARAMS["region"])
+        plan.update(region=reg.to_dict(), lattice_cell_m=S.LATTICE_CELL_M,
+                    depots={k: list(v) for k, v in zip(dn.MANHATTAN_ENTRY_POINTS, S.family_depots(study.family, study.candidates))},
+                    family_params={k: v for k, v in S.SITING_FAMILIES[study.family].items() if k != "demand_spec"},
+                    post=S.SITING_POST.get(study.family))
+    print(json.dumps(C.jsonable(plan), indent=1, default=str), flush=True)
+    if a.dry_run:
+        return plan
+    ev = study.evaluator(seeds)
+    scen = ev.scenarios
+    rows: List[Dict[str, Any]] = []
+    for inst in scen:
+        r = {"kind": "scenario", "seed": inst.meta.get("seed"), "n_bikes": len(inst.bikes), "n_orders": len(inst.orders),
+             "n_nodes": len(inst.nodes), "H": inst.H, "L": inst.L, "q_res": inst.q_res, "q0": [b.q0 for b in inst.bikes],
+             "pi": inst.pi if not isinstance(inst.pi, dict) else "time-varying",
+             "intensity": (inst.meta.get("r5") or {}).get("intensity")}
+        study.emit(r)
+        rows.append(r)
+    access = BL.access_sets(study.candidates, scen, D)
+    study.emit({"kind": "access_sets", "D_blocks": D, "access": access,
+                "uncoverable": [z for z, locs in access.items() if not locs]})
+    # sizing probe: every candidate alone (SC, B2 C1) and the CSCD rule layouts under the baseline policy
+    probe: List[Dict[str, Any]] = []
+    for c in study.candidates:
+        lay = BL.Layout.of([(c.id, "SC", 2, 1)]) if not study.smoke else BL.Layout.of([(c.id, "SC", 1, 1)])
+        evb = ev.evaluate(lay, "baseline")
+        r = {"kind": "probe", "layout_key": lay.key(), "policy": "baseline", "V": evb["V"] if evb["V"] != BL.INF else None,
+             "served_share": evb.get("served_share"), "status": evb["status"],
+             "n_arcs": [row.get("n_arcs") for row in evb["rows"]]}
+        study.emit(r)
+        probe.append(r)
+    dw = BL.demand_weights(study.candidates, scen, D, ev.p)
+    caps = _size_caps(study)
+    for m in _r5_budgets(study, [1, 2, 3]):
+        lay = BL.rule_layout("CSCD", study.candidates, study.budget(m), study.spec, dw, max_B=caps[0], max_C=caps[1])
+        if lay is None:
+            continue
+        evb = ev.evaluate(lay, "baseline")
+        r = {"kind": "probe", "layout_key": lay.key(), "budget_m": m, "policy": "baseline", "rule": "CSCD",
+             "V": evb["V"] if evb["V"] != BL.INF else None, "served_share": evb.get("served_share"), "status": evb["status"],
+             "n_arcs": [row.get("n_arcs") for row in evb["rows"]]}
+        study.emit(r)
+        probe.append(r)
+        if (a.probe_ilp or study.smoke) and m == (2.0 if not study.smoke else 1.0):
+            evi = ev.evaluate(lay, "ilp", scenarios=[0])
+            ri = {"kind": "probe", "layout_key": lay.key(), "budget_m": m, "policy": "ilp", "rule": "CSCD", "scenarios": [0],
+                  "V": evi["V"] if evi["V"] != BL.INF else None, "served_share": evi.get("served_share"),
+                  "status": evi["status"], "gaps": evi["gaps"],
+                  "runtime_s": [row.get("runtime_s") for row in evi["rows"]], "n_arcs": [row.get("n_arcs") for row in evi["rows"]],
+                  "formulation": [row.get("formulation", "per_bike") for row in evi["rows"]]}
+            study.emit(ri)
+            probe.append(ri)
+    study.emit_cache_rows(ev)
+    study.refresh_csv()
+    figures: List[str] = []
+    if not study.smoke:
+        fig = plot_map(study, scen[0], {"CSCD m=2": next((BL.Layout.from_key(r["layout_key"]) for r in probe
+                                                         if r.get("rule") == "CSCD" and r.get("budget_m") == 2.0), None)},
+                       os.path.join(study.out_dir, "map_manhattan.png"), "E9 M6: Manhattan south of 110th St")
+        if fig:
+            figures.append(fig)
+    cand_rows = [{"id": c.id, "label": c.label, "node": c.node, "lat": c.lat, "lon": c.lon, "n_restaurants": c.n_restaurants,
+                  "demand_weight": dw.get(c.id)} for c in study.candidates]
+    sections = [("Protocol", f"Region and depots: {json.dumps(C.jsonable({k: plan.get(k) for k in ('region', 'depots')}))}; "
+                             f"access radius D = {D} blocks (eBaaS 2 km coverage); seeds {seeds}."),
+                ("Candidates (2 km lattice, busiest DOHMH node per cell)",
+                 table(cand_rows, ["id", "label", "node", "lat", "lon", "n_restaurants", "demand_weight"])),
+                ("Scenarios", table(rows, ["seed", "n_bikes", "n_orders", "n_nodes", "H", "L", "q_res", "pi", "q0"])),
+                ("Access sets", json.dumps(C.jsonable(access))),
+                ("Sizing probe", table(probe, ["layout_key", "budget_m", "rule", "policy", "status", "V", "served_share",
+                                               "n_arcs", "runtime_s", "gaps", "formulation"])),
+                ("Solver statistics", json.dumps(ev.stats()))]
+    write_md(study, "E9 M6 -- Manhattan-wide region, lattice candidates and entry-point depots", sections, figures)
+    return {"plan": plan, "probe": probe, "access": access}
+
+
+def run_baselines(study: Study) -> Dict[str, Any]:
+    """A4 (i)-(ii): IJCAI-15 rules at equal budget and the capacity-matched present-day layout,
+    priced under every follower; V against budget."""
+    a = study.args
+    seeds = _r5_seeds(study)
+    budgets = _r5_budgets(study, [1, 2, 3, 4])
+    rules = list(a.rules or BL.RULES)
+    fol = _followers(study)
+    D = _access_D(study)
+    caps = _size_caps(study)
+    pres = BL.present_day_sites(study.candidates)
+    plan = {"sub": "baselines", **study.plan_common(), "seeds": seeds, "budgets_m": budgets, "rules": rules, "followers": fol,
+            "cstc_mode": a.cstc_mode, "D_blocks": D, "size_caps": caps, "present_day_source": pres["source"],
+            "lower_level_evaluations_max": len(budgets) * (len(rules) + 1) * len(fol) * len(seeds)
+            + (len(study.candidates) * len(seeds) if "CSTC" in rules and a.cstc_mode == "isolation" else 0)}
+    print(json.dumps(C.jsonable(plan), indent=1, default=str), flush=True)
+    if a.dry_run:
+        return plan
+    ev = study.evaluator(seeds)
+    levels = [study.budget(m) for m in budgets]
+    res = BL.rule_baselines(ev, study.candidates, levels, rules=rules, policies=fol, D_blocks=D, cstc_mode=a.cstc_mode,
+                            size_caps=caps,
+                            on_row=lambda r: study.emit({"kind": "rule_layout", "budget_m": r["budget"] / study.budget_unit, **r}))
+    study.emit_cache_rows(ev)
+    study.emit({"kind": "rule_weights", "weights": res["weights"], "cstc_mode": res["cstc_mode"], "D_blocks": res["D_blocks"]})
+    rows = [dict(r, budget_m=r["budget"] / study.budget_unit) for r in res["rows"]]
+    # capacity-matched present-day layout vs the reference layout at each budget
+    sweep = {r.get("budget_m"): r for r in _chosen_layouts(study, ["sweep"]) if r.get("method") == "greedy_ls" and r.get("V") is not None}
+    for m, b in zip(budgets, levels):
+        ref_row = sweep.get(m)
+        if ref_row is not None:
+            ref, ref_src = BL.Layout.from_json(ref_row["layout"]), "sweep greedy_ls"
+        else:
+            cand = [r for r in rows if r["budget_m"] == m and r["policy"] == fol[0] and r.get("V") is not None]
+            if not cand:
+                continue
+            best = min(cand, key=lambda r: r["V"])
+            ref, ref_src = BL.Layout.from_json(best["layout"]), f"best rule {best['rule']} under {fol[0]}"
+        lay = BL.capacity_matched_layout(study.candidates, ref, pres["weights"], study.spec)
+        for pol in fol:
+            evo = ev.evaluate(lay, pol)
+            row = {"kind": "rule_layout", "rule": "present_day", "budget": b, "budget_m": m, "policy": pol,
+                   "layout_key": lay.key(), "layout": lay.to_json(), "reference": ref.key(), "reference_source": ref_src,
+                   "present_day_source": pres["source"], "status": evo["status"],
+                   "V": None if evo["V"] in (None, BL.INF) else evo["V"], "investment": lay.investment(study.spec),
+                   "served_share": evo.get("served_share"), "total_B": lay.total_B(), "total_C": lay.total_C()}
+            study.emit(row)
+            rows.append(row)
+    study.emit_cache_rows(ev)
+    study.refresh_csv()
+    figures = [plot_lines([r for r in rows if r.get("V") is not None], os.path.join(study.out_dir, "V_vs_budget.png"),
+                          "budget_m", "V", ["rule", "policy"], "E9 A4: siting rules, V against budget",
+                          "budget m (x 52,150 USD)" if not study.smoke else "budget m (toy units)", "V (USD per window)")]
+    sections = [("Protocol", f"Rules {rules} (IJCAI-15 Sec. 5.1: CSCD demand-proportional within D = {D} blocks; CSTC "
+                             f"mode {a.cstc_mode}; CSAV uniform spread), each site SC with B = C = 1 plus extra spares / chargers "
+                             f"bought alternately with the remaining budget (caps {caps}); present-day layout: {pres['source']}, "
+                             f"capacity-matched (same number of sites and total B, C) to the reference layout of each budget; "
+                             f"followers {fol}; seeds {seeds}."),
+                ("Layouts and values", table(rows, ["budget_m", "rule", "policy", "layout_key", "investment", "status", "V",
+                                                    "served_share", "reference", "reference_source"])),
+                ("Solver statistics", json.dumps(ev.stats()))]
+    write_md(study, "E9 A4 -- IJCAI-15 rules and the capacity-matched present-day layout under each follower", sections, figures)
+    return {"rows": rows, "weights": res["weights"]}
+
+
+def run_levers(study: Study) -> Dict[str, Any]:
+    """A4 (iii): the marginal-lever table at a chosen layout under each follower."""
+    a = study.args
+    seeds = _r5_seeds(study)
+    fol = _followers(study)
+    lay, src = _pick_layout(study, ["sweep", "baselines", "policy_aware"])
+    plan = {"sub": "levers", **study.plan_common(), "seeds": seeds, "followers": fol, "layout": None if lay is None else lay.key(),
+            "layout_source": src, "levers": list(BL.LEVERS)}
+    print(json.dumps(C.jsonable(plan), indent=1, default=str), flush=True)
+    if a.dry_run:
+        return plan
+    if lay is None:
+        write_md(study, "E9 A4 -- marginal-lever table", [("Status", "no layout (pass --layouts or run --sweep / --baselines)")], [])
+        study.refresh_csv()
+        return plan
+    ev = study.evaluator(seeds)
+    lt = BL.lever_table(ev, lay, policies=fol)
+    for r in lt["rows"]:
+        study.emit({"kind": "lever", "layout_key_ref": lay.key(), **r})
+    for r in lt["best"]:
+        study.emit({"kind": "lever_best", "layout_key_ref": lay.key(), **r})
+    study.emit_cache_rows(ev)
+    study.refresh_csv()
+    groups: Dict[str, Dict[str, Optional[float]]] = {}
+    for r in lt["best"]:
+        groups.setdefault(r["lever"], {})[r["policy"]] = r.get("d_V")
+    figures = [plot_bars(groups, os.path.join(study.out_dir, "levers.png"), "d V (USD per window, negative = saves)",
+                         f"E9 A4 levers at {lay.key()}")]
+    sections = [("Reference", f"Layout {lay.key()} ({src}); V per follower {json.dumps(C.jsonable(lt['reference']))}"),
+                ("Best site per lever and follower", table(lt["best"], ["lever", "policy", "site", "d_V", "d_investment", "served_new"])),
+                ("All lever evaluations", table(lt["rows"], ["lever", "site", "policy", "status", "V_ref", "V_new", "d_V", "d_opex",
+                                                             "d_investment", "d_allocated", "d_V_per_kusd", "served_ref",
+                                                             "served_new", "note"])),
+                ("Solver statistics", json.dumps(ev.stats()))]
+    write_md(study, "E9 A4 -- marginal-lever table under each follower", sections, figures)
+    return lt
+
+
+def run_policy_aware(study: Study) -> Dict[str, Any]:
+    """M4: greedy + local search with follower E (or another ``--follower``) as the lower level;
+    every chosen layout cross-evaluated under all followers."""
+    a = study.args
+    seeds = _r5_seeds(study)
+    budgets = _r5_budgets(study, [1, 2, 3])
+    fol = _followers(study)
+    menu = dict(study.size_menu)
+    plan = {"sub": "policy_aware", **study.plan_common(), "seeds": seeds, "budgets_m": budgets, "follower": a.follower,
+            "cross_followers": fol, "size_menu": menu}
+    print(json.dumps(C.jsonable(plan), indent=1, default=str), flush=True)
+    if a.dry_run:
+        return plan
+    ev = study.evaluator(seeds)
+    levels = [study.budget(m) for m in budgets]
+    kw = study.greedy_kwargs()
+    if study.smoke:
+        kw["min_served_share"] = 0.0      # the toy policies serve few orders; the guard is tested elsewhere
+    g = BL.greedy_local_search(ev, study.candidates, max(levels), size_menu=menu, roles=S.ROLES, budget_levels=levels,
+                               policy=a.follower, **kw,
+                               on_step=lambda r: study.emit({"kind": "greedy_step", "policy": a.follower, **r}))
+    study.emit_cache_rows(ev)
+    study.emit({"kind": "greedy_summary", "policy": a.follower, "class_counts": g["class_counts"],
+                "wall_exhausted": g["wall_exhausted"], "best_singleton": g["best_singleton"], "frontier": g["frontier"]})
+    rows: List[Dict[str, Any]] = []
+    ilp_chosen = {r.get("budget_m"): r for r in _chosen_layouts(study, ["sweep"]) if r.get("method") == "greedy_ls"}
+    for m, b in zip(budgets, levels):
+        res = g["per_budget"][b]
+        lay = res["layout"]
+        row = layout_row(study, ev, lay, "layout_chosen", f"greedy_ls[{a.follower}]", m, {"policy": a.follower, **_greedy_cols(res)})
+        if lay is not None:
+            cr = BL.cross_evaluate(ev, lay, policies=fol)
+            for pol in fol:
+                row.update(eval_cols(cr[pol], f"{pol}_"))
+            row["V"] = cr[a.follower]["V"] if a.follower in cr else res["value"]
+            row["price_of_decentralisation"] = cr.get("price_of_decentralisation")
+            ref = ilp_chosen.get(m)
+            if ref is not None and ref.get("layout") and "ilp" in fol:
+                lay_i = BL.Layout.from_json(ref["layout"])
+                cri = BL.cross_evaluate(ev, lay_i, policies=fol)
+                row["ilp_chosen_layout"] = lay_i.key()
+                for pol in fol:
+                    row[f"ilp_chosen_{pol}_V"] = cri[pol]["V"]
+        study.emit(row)
+        study.emit_cache_rows(ev)
+        rows.append(row)
+    study.refresh_csv()
+    cols = ["budget_m", "layout_key", "investment", "status"] + [f"{p}_V" for p in fol] + \
+           [f"{p}_served_share" for p in fol] + ["price_of_decentralisation", "ilp_chosen_layout"] + [f"ilp_chosen_{p}_V" for p in fol]
+    groups: Dict[str, Dict[str, Optional[float]]] = {}
+    for r in rows:
+        for p in fol:
+            groups.setdefault(f"m={r['budget_m']:g}", {})[f"{p}"] = r.get(f"{p}_V")
+    figures = [plot_bars(groups, os.path.join(study.out_dir, "policy_aware.png"), "V (USD per window)",
+                         f"E9 M4: layouts chosen with follower {a.follower}, priced under each follower")]
+    sections = [("Chosen layouts", table(rows, cols)),
+                ("Greedy frontier", json.dumps(g["frontier"]) + f"\n\npriced layouts by status: {json.dumps(g['class_counts'])}"),
+                ("Solver statistics", json.dumps(ev.stats()))]
+    write_md(study, f"E9 M4 -- policy-aware siting with follower {a.follower}", sections, figures)
+    return {"rows": rows, "greedy": g}
+
+
+def run_compliance(study: Study) -> Dict[str, Any]:
+    """M4: compliance sweep at a chosen layout (share alpha_c of the riders follows the ILP plan)."""
+    a = study.args
+    seeds = _r5_seeds(study)
+    alphas = [float(x) for x in (a.alphas or ALPHAS)]
+    draws = list(range(int(a.draws))) if not study.smoke else [0, 1]
+    lay, src = _pick_layout(study, ["sweep", "baselines", "policy_aware"])
+    plan = {"sub": "compliance", **study.plan_common(), "seeds": seeds, "alphas": alphas, "draws": draws,
+            "station_plan": a.station_plan, "layout": None if lay is None else lay.key(), "layout_source": src}
+    print(json.dumps(C.jsonable(plan), indent=1, default=str), flush=True)
+    if a.dry_run:
+        return plan
+    if lay is None:
+        write_md(study, "E9 M4 -- compliance sweep", [("Status", "no layout (pass --layouts or run --sweep / --baselines)")], [])
+        study.refresh_csv()
+        return plan
+    ev = study.evaluator(seeds)
+    cs = BL.compliance_sweep(ev, lay, alphas=alphas, seeds=draws, station_plan=a.station_plan)
+    for r in cs["rows"]:
+        study.emit({"kind": "compliance", "layout_key": lay.key(), "station_plan": a.station_plan, **r})
+    for r in cs["summary"]:
+        study.emit({"kind": "compliance_summary", "layout_key": lay.key(), "station_plan": a.station_plan, **r})
+    study.emit_cache_rows(ev)
+    study.refresh_csv()
+    figures = [plot_lines([dict(r, series="V") for r in cs["summary"] if r.get("V") is not None],
+                          os.path.join(study.out_dir, "compliance.png"), "alpha_c", "V", ["series"],
+                          f"E9 M4 compliance at {lay.key()} (station layer: {a.station_plan})", "compliance share alpha_c",
+                          "V (USD per window)")]
+    sections = [("Protocol", f"Layout {lay.key()} ({src}); plan = the cached lower-level ILP schedule per scenario; "
+                             f"non-compliant riders follow the r5_selfish rule; draws {draws}; seeds {seeds}."),
+                ("V against compliance", table(cs["summary"], ["alpha_c", "V", "served_share", "mean_defected", "complete"])),
+                ("Per scenario and draw", table(cs["rows"], ["scenario", "alpha_c", "draw", "status", "opex", "ilp_opex",
+                                                             "served_share", "n_compliant", "n_defected", "check_ok"])),
+                ("Solver statistics", json.dumps(ev.stats()))]
+    write_md(study, "E9 M4 -- compliance sweep (share of riders following the coordinator)", sections, figures)
+    return cs
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 def main(argv: Optional[List[str]] = None) -> Dict[str, Any]:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    for sub in SUBS:
-        ap.add_argument(f"--{sub}", action="store_true")
+    for sub in SUBS + NEW_SUBS:
+        ap.add_argument(f"--{sub.replace('_', '-')}", dest=sub, action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--smoke", action="store_true", help="toy siting instances, seconds")
     ap.add_argument("--out-root", default=None)
@@ -957,7 +1357,9 @@ def main(argv: Optional[List[str]] = None) -> Dict[str, Any]:
     ap.add_argument("--access-d", nargs="*", type=int, default=None)
     ap.add_argument("--zeta", type=float, default=None, help="access: expected service share [U5] for the integrated run")
     ap.add_argument("--layouts", nargs="*", default=None, help="cross: extra layout keys")
-    ap.add_argument("--family", default=DEFAULT_FAMILY, help=f"siting family, one of {sorted(S.SITING_FAMILIES)}")
+    ap.add_argument("--family", default=None,
+                    help=f"siting family, one of {sorted(S.SITING_FAMILIES)} (default {DEFAULT_FAMILY}; "
+                         f"round-5 sub-commands {NEW_DEFAULT_FAMILY})")
     ap.add_argument("--min-served", type=float, default=MIN_SERVED_SHARE,
                     help="greedy: moves whose expected served share is below this are discarded")
     ap.add_argument("--allow-s-only", action="store_true", help="lift the rule 'swap-only sites only next to a C / SC object'")
@@ -965,18 +1367,31 @@ def main(argv: Optional[List[str]] = None) -> Dict[str, Any]:
                     help="reposition targets of the search sub-commands (validate always uses all_candidates)")
     ap.add_argument("--access-mode", default="repair", choices=["repair", "report", "enforce"],
                     help="access: how the greedy treats the planner-only row [U4]")
+    # round-5 options
+    ap.add_argument("--aggregate", default="auto", choices=["auto", "on", "off"],
+                    help="lower-level ILP formulation: auto = aggregated flow (O1) for the round-5 sub-commands only")
+    ap.add_argument("--followers", nargs="*", default=None, help=f"round-5: lower-level policies, subset of {list(FOLLOWERS)}")
+    ap.add_argument("--follower", default="selfish", choices=list(FOLLOWERS), help="policy-aware: the greedy's lower level")
+    ap.add_argument("--rules", nargs="*", default=None, help=f"baselines: subset of {list(BL.RULES)}")
+    ap.add_argument("--cstc-mode", default="isolation", choices=["isolation", "access"],
+                    help="baselines: CSTC = total cost in isolation (default) or IJCAI-15 inverse-distance access")
+    ap.add_argument("--alphas", nargs="*", type=float, default=None, help="compliance: shares alpha_c")
+    ap.add_argument("--draws", type=int, default=3, help="compliance: draws of the compliant set per alpha")
+    ap.add_argument("--station-plan", default="plan", choices=["plan", "policy"], help="compliance: station layer")
+    ap.add_argument("--probe-ilp", action="store_true", help="manhattan: also solve one reference layout with the ILP")
     args = ap.parse_args(argv)
     if args.threads > 3:
         raise SystemExit("round-3 rule: Threads <= 3")
-    chosen = [sub for sub in SUBS if getattr(args, sub)]
+    chosen = [sub for sub in SUBS + NEW_SUBS if getattr(args, sub)]
     if not chosen:
-        raise SystemExit("choose one of " + ", ".join(f"--{s}" for s in SUBS))
+        raise SystemExit("choose one of " + ", ".join(f"--{s.replace('_', '-')}" for s in SUBS + NEW_SUBS))
     warnings.simplefilter("ignore")
     out: Dict[str, Any] = {}
     for sub in chosen:
         study = Study(sub, args)
         fn = {"validate": run_validate, "sweep": run_sweep, "roles": run_roles, "deck": run_deck, "cross": run_cross,
-              "access": run_access}[sub]
+              "access": run_access, "manhattan": run_manhattan, "baselines": run_baselines, "levers": run_levers,
+              "policy_aware": run_policy_aware, "compliance": run_compliance}[sub]
         out[sub] = fn(study)
         if not args.dry_run:
             with open(os.path.join(study.out_dir, "wall_time.json"), "a", encoding="utf-8") as fh:

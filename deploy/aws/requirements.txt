@@ -1,0 +1,34 @@
+# Python dependencies of ebike_swap_sim, pinned to the versions installed on the author's
+# machine on 2026-10-19 (macOS arm64, Python 3.12.7, conda base).  Only packages the code
+# imports are listed (plus pytest); everything else comes in as a dependency.
+#   numpy / pandas / scipy / networkx / matplotlib : package, experiments, tests
+#   openpyxl   : pandas.read_excel of the ACS NTA workbooks (data/raw/acs/*.xlsx, acs_weights.py)
+#   gurobipy   : the ILP (needs a licence at run time: GRB_LICENSE_FILE, see README_AWS.md)
+#   torch, gymnasium, stable-baselines3 : the PPO comparator (rl_env.py, r5_x7_rl.py, r6 rl stages)
+#   pytest     : the test suite (about 480 tests) and the bootstrap toy check
+# Not listed on purpose: requests (only data/fetch_counters.py, a one-off download script).
+#
+# Install on the EC2 instance (Ubuntu 24.04 x86_64, Python 3.12 venv):
+#     python3.12 -m venv ~/battery_swap/venv && . ~/battery_swap/venv/bin/activate
+#     pip install -r deploy/aws/requirements.txt
+#
+# torch: on Linux the CPU-only wheel from the PyTorch index (about 190 MB) instead of the
+# default PyPI wheel, which bundles CUDA (about 900 MB) and is useless on a CPU instance.
+# The "+cpu" local version exists only on that index, so pip cannot pick the CUDA build by
+# mistake.  Verified on 2026-10-19: torch-2.9.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl is
+# listed at https://download.pytorch.org/whl/cpu/torch/.  On macOS the plain 2.9.0 wheel is
+# installed (there is no "+cpu" build for macOS; the macOS wheel is CPU-only anyway).
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+numpy==1.26.4
+pandas==2.3.2
+scipy==1.12.0
+networkx==3.3
+matplotlib==3.10.0
+openpyxl==3.1.5
+gurobipy==13.0.1
+torch==2.9.0+cpu; sys_platform == "linux"
+torch==2.9.0; sys_platform != "linux"
+gymnasium==1.4.0
+stable-baselines3==2.9.0
+pytest==7.4.4

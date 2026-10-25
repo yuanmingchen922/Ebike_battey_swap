@@ -4,10 +4,15 @@ hand-made 1-bike / 2-order instance where the threshold rule is needed, path
 contiguity in the arc library, parity under pruning, pruned-arc fallbacks,
 zone dispatch and charge-rule ordering; round-2 rules (DECISIONS R2.3):
 stock-aware site choice, DEMAND_AWARE charging (forecast / reserve / hub rule)
-and the named variants ``default`` / ``round1`` / ``legacy``."""
+and the named variants ``default`` / ``round1`` / ``legacy``; round 5
+(``notes/reading_to_model.md``): M2 range-aware swap rule with reservations
+(``r5_range``), M3 cost-aware zero-sum transfers (``r5_transfer``), M4 logit station
+choice, its equilibrium mode and the compliance helper (``r5_selfish``), the new
+default ``r5``, outage accounting and non-anticipativity of every rule."""
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 
@@ -19,6 +24,7 @@ from ebike_swap_sim import (
     Instance,
     Order,
     Route,
+    Service,
     battery_swap_p7_instance,
     build_arcs,
     check,
@@ -29,9 +35,15 @@ from ebike_swap_sim import (
 )
 from ebike_swap_sim.baseline import (
     BASELINE_VARIANTS,
+    DEFAULT_VARIANT_NEW,
     BaselineParams,
     baseline_variant_params,
+    logit_probabilities,
+    poisson_sf,
     run_baseline,
+    run_selfish_equilibrium,
+    select_compliant_bikes,
+    simulate_compliance,
 )
 
 #: families the baseline must satisfy by construction (DECISIONS.md: (9), (17), (18) are reported)
@@ -621,7 +633,9 @@ def test_baseline_variants_and_param_validation():
     assert baseline_variant_params("round1") == {"stock_aware_site": False, "charge_rule": "HIGH_FIRST"}
     assert baseline_variant_params("legacy") == {"stock_aware_site": False, "charge_rule": "HIGH_FIRST",
                                                  "jit_dispatch": False, "swap_on_reach_refusal": False}
-    assert set(BASELINE_VARIANTS) == {"default", "round1", "legacy"}
+    assert {"default", "round1", "legacy"} <= set(BASELINE_VARIANTS)
+    assert set(BASELINE_VARIANTS) == {"default", "r2", "round1", "legacy",
+                                      "r5_range", "r5_transfer", "r5_selfish", "r5"}
     p = baseline_variant_params("round1", transfer_rule="REORDER_POINT")
     assert p["transfer_rule"] == "REORDER_POINT" and p["charge_rule"] == "HIGH_FIRST"
     assert BaselineParams.coerce(baseline_variant_params("legacy")).jit_dispatch is False
@@ -645,3 +659,458 @@ def test_baseline_variants_and_param_validation():
             s, f = run_baseline(inst, lib, baseline_variant_params(name, transfer_rule=rule))
             assert cost(inst, lib, s)["total"] == pytest.approx(total), (name, rule)
             assert check(inst, lib, s)["ok"] and f["inventory_consistent"]
+
+
+# ---------------------------------------------------------------------------
+# round 5 (notes/reading_to_model.md): M2 / M3 / M4, variants r2 / r5_*
+# ---------------------------------------------------------------------------
+#: families the round-5 rules may report (DECISIONS.md: (9), (17), (18) are reported, not enforced)
+REPORTED = {"(9)", "(17)", "(18)"}
+R5_VARIANTS = ("r2", "r5_range", "r5_transfer", "r5_selfish", "r5")
+
+
+def assert_policy_ok(inst, lib, sched, flags) -> None:
+    """check() clean modulo (9)/(17)/(18), online stock == reconstruct_inventory, contiguous paths."""
+    rep = check(inst, lib, sched)
+    assert set(rep["families"]) <= REPORTED, rep["families"]
+    assert_hard_ok(rep)
+    assert flags["inventory_consistent"]
+    assert sched.n == reconstruct_inventory(inst, lib, sched.x, sched.c, sched.z)
+    assert rep["identity_24_ok"]
+    assert_contiguous_paths(inst, lib, sched)
+
+
+def test_round5_variants_registry_and_validation():
+    """'r2' is the round-2 default (BaselineParams() unchanged), 'r5' = M2 + M3 + stock-aware +
+    DEMAND_AWARE; new parameters validate."""
+    assert baseline_variant_params("r2") == baseline_variant_params("default") == {}
+    assert DEFAULT_VARIANT_NEW == "r5"
+    r5 = BaselineParams.coerce(baseline_variant_params("r5"))
+    assert (r5.swap_rule, r5.reservation, r5.transfer_rule, r5.stock_aware_site, r5.charge_rule) == \
+        ("RANGE", True, "COST_AWARE", True, "DEMAND_AWARE")
+    assert BaselineParams.coerce(baseline_variant_params("r5_selfish")).site_choice == "LOGIT"
+    assert BaselineParams.coerce(baseline_variant_params("r5_transfer")).transfer_rule == "COST_AWARE"
+    p0 = BaselineParams()
+    assert (p0.swap_rule, p0.reservation, p0.site_choice, p0.transfer_rule) == ("THRESHOLD", False, "NEAREST", "NONE")
+    for bad in ({"swap_rule": "SOMETIMES"}, {"site_choice": "RANDOM"}, {"range_typical": "future"},
+                {"stockout_cost_mode": "x"}, {"logit_scale": 0.0}, {"range_cap_frac": 0.0},
+                {"reservation_timeout": -1}, {"transfer_lookback": 0}, {"transfer_reserve": "maybe"},
+                {"logit_gamma": -1.0}, {"transfer_load_cap": -2}):
+        with pytest.raises(ValueError):
+            BaselineParams.coerce(bad)
+    with pytest.raises(ValueError):
+        BaselineParams.coerce({"transfer_rule": "PLAN"})          # internal value only
+    # 'r2' reproduces the default run bit for bit (toy, both transfer rules)
+    inst = toy_instance()
+    lib = build_arcs(inst)
+    for rule in ("NONE", "REORDER_POINT"):
+        s_def, _ = run_baseline(inst, lib, {"transfer_rule": rule})
+        s_r2, _ = run_baseline(inst, lib, baseline_variant_params("r2", transfer_rule=rule))
+        assert path_sig(s_def, lib) == path_sig(s_r2, lib) and s_def.c == s_r2.c and s_def.z == s_r2.z
+
+
+def test_poisson_and_logit_helpers():
+    assert poisson_sf(3.0, 0) == 1.0 and poisson_sf(0.0, 1) == 0.0 and poisson_sf(0.0, -2) == 1.0
+    assert poisson_sf(2.0, 1) == pytest.approx(1 - math.exp(-2.0))
+    assert poisson_sf(2.0, 2) == pytest.approx(1 - math.exp(-2.0) * 3.0)
+    assert poisson_sf(2.0, 1.2) == poisson_sf(2.0, 2)           # fractional k rounds up
+    pr = logit_probabilities([0.0, 0.0, 0.0])
+    assert pr == pytest.approx([1 / 3] * 3)
+    pr = logit_probabilities([0.0, -1.0], scale=1.0)
+    assert sum(pr) == pytest.approx(1.0) and pr[0] == pytest.approx(1 / (1 + math.exp(-1)))
+    assert logit_probabilities([0.0, -1.0], scale=0.01)[0] == pytest.approx(1.0)
+    assert logit_probabilities([1000.0, 0.0])[0] == pytest.approx(1.0)       # stable
+    assert logit_probabilities([]) == []
+
+
+# ---- M2: range-aware swap rule ------------------------------------------------
+def range_instance() -> Instance:
+    """Swap site A (one full spare) and customer C; A <-> C is one slot and 3 levels
+    (L = 8, q_thr = 2).  The bike serves order 1 (A -> C) and idles at C with q = 3 > q_thr;
+    order 2 (A -> C) is released at t = 6.  The threshold rule never swaps and cannot serve
+    order 2 (C -> A -> C needs 6 levels); the range rule swaps at t = 2 because the typical
+    released order (order 1 from C: 6 levels + 3 back to A) exceeds q."""
+    disc = Discretisation(Delta_h=1 / 12, H=12, L=8, eps_kwh=0.02, eta=0.8)
+    routes = {("A", "C"): Route(disc.Delta_h, 3 * disc.eps_kwh, 1.0),
+              ("C", "A"): Route(disc.Delta_h, 3 * disc.eps_kwh, 1.0)}
+    return Instance(
+        disc=disc, nodes=["A", "C"], routes=routes, bikes=[Bike(1, "A", 6)],
+        orders=[Order(1, "A", "C", r=0, a=0, b=3, hp=1, hd=0),
+                Order(2, "A", "C", r=6, a=6, b=9, hp=1, hd=0)],
+        facilities=[Facility("A", "A", swap=True, charge=False, y=1, B=1, C=0, K=1, M=1, sigma=1)],
+        services=[], q_res=0, rho=0.0,
+    )
+
+
+def test_range_rule_swaps_before_the_next_order_threshold_rule_does_not():
+    inst = range_instance()
+    assert inst.validate() == []
+    lib = build_arcs(inst)
+    s_thr, f_thr = run_baseline(inst, lib, baseline_variant_params("r2"))
+    s_rng, f_rng = run_baseline(inst, lib, baseline_variant_params("r5_range"))
+    for s, f in ((s_thr, f_thr), (s_rng, f_rng)):
+        assert_policy_ok(inst, lib, s, f)
+    assert s_thr.u == {1: 0, 2: 1} and f_thr["n_swaps"] == 0 and f_thr["swap_rule_effective"] == "THRESHOLD"
+    assert s_rng.u == {1: 0, 2: 0} and f_rng["n_swaps"] == 1 and f_rng["swap_rule_effective"] == "RANGE"
+    kinds = [(a.kind, a.src) for a in s_rng.path(1, lib)]
+    assert kinds[:3] == [("deliver", ("A", 0, 6)), ("move", ("C", 2, 3)), ("swap", ("A", 3, 0))]
+    assert f_rng["range_rule"]["triggers"] == 1 and f_rng["range_rule"]["by_source"]["typical"] == 1
+    out = f_rng["outages"]
+    assert (out["reservations_made"], out["reservations_used"], out["swap_episodes"], out["outage_episodes"]) == (1, 1, 1, 0)
+    assert cost(inst, lib, s_rng)["total"] < cost(inst, lib, s_thr)["total"]
+    # 'static' typical orders see order 2 already at t = 2 (same decision here); with a margin of
+    # 0 and a cap of 3 levels the trigger q < 3 is false at q = 3 and the bike idles as r2 does
+    s_st, _ = run_baseline(inst, lib, baseline_variant_params("r5_range", range_typical="static"))
+    assert path_sig(s_st, lib) == path_sig(s_rng, lib)
+    s_cap, f_cap = run_baseline(inst, lib, baseline_variant_params("r5_range", range_cap_frac=3 / 8, range_margin=0))
+    assert f_cap["n_swaps"] == 0 and s_cap.u == {1: 0, 2: 1}
+
+
+def reservation_instance() -> Instance:
+    """Swap sites S1 and S2 with one full spare each; bike 1 at X (2 slots from S1, 3 from
+    S2) with q = 1 and bike 2 at S1 with q = 0, both need a swap at t = 0 (L = 4).  Rides
+    from X cost one level, S1 <-> S2 (one slot) costs none."""
+    disc = Discretisation(Delta_h=1 / 12, H=8, L=4, eps_kwh=0.02, eta=0.8)
+    edges = {("X", "S1"): 2, ("X", "S2"): 3, ("S1", "S2"): 1, ("S2", "S1"): 1}
+    routes = {uv: Route(n * disc.Delta_h, (disc.eps_kwh if uv[0] == "X" else 0.0), float(n))
+              for uv, n in edges.items()}
+    return Instance(
+        disc=disc, nodes=["X", "S1", "S2"], routes=routes,
+        bikes=[Bike(1, "X", 1), Bike(2, "S1", 0)], orders=[],
+        facilities=[Facility("S1", "S1", swap=True, charge=False, y=1, B=1, C=0, K=2, M=1, sigma=1),
+                    Facility("S2", "S2", swap=True, charge=False, y=1, B=1, C=0, K=2, M=1, sigma=1)],
+        services=[], q_res=0, rho=0.0,
+    )
+
+
+def test_reservation_prevents_the_arrival_stock_out():
+    """M2: without reservations bike 2 takes S1's only battery at t = 0 and bike 1, which set
+    off for S1 at t = 0, arrives at an empty site (outage) and re-routes to S2; with
+    reservations bike 1 holds S1's battery and bike 2 goes to S2 at once -- no outage."""
+    inst = reservation_instance()
+    assert inst.validate() == []
+    lib = build_arcs(inst)
+    s2, f2 = run_baseline(inst, lib, baseline_variant_params("r2"))
+    s5, f5 = run_baseline(inst, lib, baseline_variant_params("r5_range"))
+    for s, f in ((s2, f2), (s5, f5)):
+        assert_policy_ok(inst, lib, s, f)
+        assert f["n_swaps"] == 2
+    o2, o5 = f2["outages"], f5["outages"]
+    assert (o2["swap_episodes"], o2["outage_episodes"], o2["arrivals_to_empty"]) == (2, 1, 1)
+    assert o2["outage_rate"] == pytest.approx(0.5)
+    assert (o5["swap_episodes"], o5["outage_episodes"], o5["arrivals_to_empty"], o5["outage_rate"]) == (2, 0, 0, 0.0)
+    assert (o5["reservations_made"], o5["reservations_used"], o5["reservations_expired"]) == (2, 2, 0)
+    assert [a.dst[0] for a in s2.path(1, lib) if a.kind == "move"] == ["S1", "S2"]
+    assert [a.dst[0] for a in s5.path(1, lib) if a.kind == "move"] == ["S1"]
+    assert [a.dst[0] for a in s5.path(2, lib) if a.kind == "move"] == ["S2"]
+    assert [a.l for a in s5.path(1, lib) if a.kind == "swap"] == [2]
+    # reservations alone (threshold trigger) give the same outcome here
+    s_r, f_r = run_baseline(inst, lib, {"reservation": True})
+    assert path_sig(s_r, lib) == path_sig(s5, lib) and f_r["outages"]["outage_episodes"] == 0
+
+
+def test_reservation_timeout_releases_the_hold():
+    """M2 timeout: with ``reservation_timeout = 1`` bike 1's hold (made at t = 0) lapses before it
+    arrives at t = 2; nobody took the battery, so it still swaps there (new hold, used)."""
+    inst = reservation_instance()
+    lib = build_arcs(inst)
+    s, f = run_baseline(inst, lib, baseline_variant_params("r5_range", reservation_timeout=1))
+    assert_policy_ok(inst, lib, s, f)
+    o = f["outages"]
+    assert o["reservations_expired"] == 1 and o["reservations_used"] == 2 and f["n_swaps"] == 2
+    assert o["outage_episodes"] == 0
+
+
+# ---- M3: cost-aware zero-sum transfers ------------------------------------------
+def transfer_instance(f_e: float = 20.0) -> Instance:
+    """Swap-only site S (one full spare, no charger) and charge-only hub Hb (3 full spares, one
+    charger); services Hb -> S and S -> Hb both depart at t = 2 and arrive at t = 3.  Two
+    bikes at S need a swap at t = 0: bike 1 takes the spare, bike 2 waits for a battery.
+    Order 1 is released too late to be served (it only prices a stock-out: P = 30)."""
+    disc = Discretisation(Delta_h=1 / 12, H=10, L=4, eps_kwh=0.02, eta=0.8)
+    edges = {("S", "Hb"): 1, ("Hb", "S"): 1, ("S", "X"): 1, ("X", "S"): 1}
+    routes = {uv: Route(n * disc.Delta_h, disc.eps_kwh, float(n)) for uv, n in edges.items()}
+    return Instance(
+        disc=disc, nodes=["S", "Hb", "X"], routes=routes,
+        bikes=[Bike(1, "S", 0), Bike(2, "S", 1)],
+        orders=[Order(1, "S", "X", r=9, a=9, b=10, hp=1, hd=0, P=30.0, w=18.0, v=36.0)],
+        facilities=[Facility("S", "S", swap=True, charge=False, y=1, B=1, C=0, K=6, M=2, sigma=1),
+                    Facility("Hb", "Hb", swap=False, charge=True, y=1, B=3, C=1, K=6, Cbar=1, P_kw=10.0)],
+        services=[Service(1, "Hb", "S", l=2, u=3, U=5, f=f_e, vreb=1.0),
+                  Service(2, "S", "Hb", l=2, u=3, U=5, f=f_e, vreb=1.0)],
+        q_res=0, rho=0.0,
+    )
+
+
+def test_cost_aware_transfers_ship_to_the_forecast_deficit_only_when_worth_it():
+    inst = transfer_instance()
+    assert inst.validate() == []
+    lib = build_arcs(inst)
+    s, f = run_baseline(inst, lib, baseline_variant_params("r5_transfer"))
+    assert_policy_ok(inst, lib, s, f)
+    assert f["transfer_rule_effective"] == "COST_AWARE"
+    # full batteries Hb -> S (the queued bike is a known request, plus the observed swap rate)
+    # and the empty returned by bike 1 S -> Hb (network forecast deficit)
+    assert s.h == {1: 1, 2: 1} and s.z == {(1, 4): 3, (2, 0): 1}
+    ships = f["cost_aware"]["shipments"]
+    assert [(x["service"], x["loads"]) for x in ships] == [(1, {4: 3}), (2, {0: 1})]
+    assert ships[0]["benefit"] == pytest.approx(30 * (1 + poisson_sf(13 / 3, 1) + poisson_sf(13 / 3, 2)))
+    assert ships[0]["cost"] == pytest.approx(23.0) and ships[1]["cost"] == pytest.approx(21.0)
+    assert all(x["benefit"] > x["cost"] for x in ships)
+    assert f["n_swaps"] == 2 and [a.l for a in s.path(2, lib) if a.kind == "swap"] == [3]
+    out = f["outages"]
+    assert (out["outage_episodes"], out["stockout_queue_slots"]) == (1, 3)
+    # zero-sum: the network total is conserved at every boundary (identity (24))
+    assert check(inst, lib, s)["identity_24_ok"]
+    # expensive services: the expected avoided stock-out cost no longer covers f_e
+    inst_x = transfer_instance(f_e=100.0)
+    lib_x = build_arcs(inst_x)
+    s_x, f_x = run_baseline(inst_x, lib_x, baseline_variant_params("r5_transfer"))
+    assert_policy_ok(inst_x, lib_x, s_x, f_x)
+    assert s_x.h == {1: 0, 2: 0} and f_x["cost_aware"]["rejected_by_cost"] == 2
+    assert f_x["n_swaps"] == 1 and f_x["queued_at_H"] == [2]
+    # valuing a stock-out by the waiting cost (w x Delta x L = 6) ships nothing at f_e = 20
+    s_w, f_w = run_baseline(inst, lib, baseline_variant_params("r5_transfer", stockout_cost_mode="wait"))
+    assert s_w.h == {1: 0, 2: 0} and f_w["cost_aware"]["shipments"] == []
+    # a load cap of 2 batteries per service
+    s_c, f_c = run_baseline(inst, lib, baseline_variant_params("r5_transfer", transfer_load_cap=2))
+    assert_policy_ok(inst, lib, s_c, f_c)
+    assert s_c.z[(1, 4)] == 2
+    # REORDER_POINT ships as well, with no cost test
+    s_rp, _ = run_baseline(inst, lib, {"transfer_rule": "REORDER_POINT"})
+    assert s_rp.h == {1: 1, 2: 1}
+    # 'r5' without services: the rule is inert and recorded as such
+    inst_n = transfer_instance()
+    inst_n.services = []
+    inst_n.reindex()
+    s_n, f_n = run_baseline(inst_n, build_arcs(inst_n), baseline_variant_params("r5"))
+    assert f_n["transfer_rule_effective"] == "NONE" and s_n.h == {}
+
+
+def test_cost_aware_never_ships_reserved_batteries():
+    """M2 + M3: a full battery reserved by a bike heading for the hub-side site is not shipped."""
+    inst = transfer_instance()
+    lib = build_arcs(inst)
+    s, f = run_baseline(inst, lib, baseline_variant_params("r5"))
+    assert_policy_ok(inst, lib, s, f)
+    for (j, q, t), val in s.n.items():
+        assert val >= 0
+    assert all(z >= 0 for z in s.z.values())
+
+
+# ---- M4: self-interested logit station choice ----------------------------------
+def test_logit_site_choice_limits_and_determinism():
+    inst = two_site_instance()
+    lib = build_arcs(inst)
+    # stock-out risk dominates: both bikes ride to the stocked site S2 whatever the seed
+    for seed in range(4):
+        s, f = run_baseline(inst, lib, baseline_variant_params("r5_selfish", logit_gamma=100.0, choice_seed=seed))
+        assert_policy_ok(inst, lib, s, f)
+        assert f["n_swaps"] == 2 and f["site_choice"]["decisions"] == {"S1": 0, "S2": 2}
+        assert f["site_choice"]["shares"] == {"S1": 0.0, "S2": 1.0} and f["site_choice"]["logit_draws"] == 2
+    # travel time dominates and the risk is ignored: both queue at the nearer, empty S1
+    s, f = run_baseline(inst, lib, baseline_variant_params("r5_selfish", logit_alpha=50.0, logit_gamma=0.0))
+    assert_policy_ok(inst, lib, s, f)
+    assert f["n_swaps"] == 0 and sorted(f["queued_at_H"]) == [1, 2]
+    # bike 1 reaches empty S1 with q = 0 (S2 now out of reach): re-choice without any stocked option
+    assert f["outages"]["arrivals_to_empty"] == 1 and f["outages"]["decisions_without_stock"] == 1
+    assert f["outages"]["outage_episodes"] == 2 and f["site_choice"]["decisions"] == {"S1": 2, "S2": 0}
+    # same seed -> same run; the draws are private per (seed, bike, t)
+    a, _ = run_baseline(inst, lib, baseline_variant_params("r5_selfish", choice_seed=7))
+    b, _ = run_baseline(inst, lib, baseline_variant_params("r5_selfish", choice_seed=7))
+    assert path_sig(a, lib) == path_sig(b, lib)
+    seen = set()
+    for seed in range(30):
+        s, f = run_baseline(inst, lib, baseline_variant_params("r5_selfish", choice_seed=seed, logit_gamma=1.0))
+        assert_policy_ok(inst, lib, s, f)
+        seen.add(tuple(sorted(f["site_choice"]["decisions"].items())))
+    assert len(seen) > 1                                          # the choice is genuinely random
+
+
+def test_site_utility_components():
+    """U_j = -(alpha tau + beta W_j + gamma R_j) with W_j = |queue_j| / (M_j / sigma_j) or the
+    equilibrium input, R_j = Pr(Poisson(rate tau) >= a_j)."""
+    from ebike_swap_sim.baseline import _BaselineRun
+    inst = two_site_instance()
+    lib = build_arcs(inst)
+    run = _BaselineRun(inst, lib, BaselineParams.coerce(baseline_variant_params("r5_selfish")))
+    bs = run.bikes[1]
+    u, parts = run.site_utility(bs, "S2", 2, 0)
+    assert parts == {"tau": 2.0, "wait": 0.0, "risk": 0.0} and u == pytest.approx(-2.0)
+    u, parts = run.site_utility(bs, "S1", 1, 0)
+    assert parts["risk"] == 1.0 and u == pytest.approx(-(1.0 + 4.0))
+    run.queue["S2"] = [2]
+    u, parts = run.site_utility(bs, "S2", 2, 0)
+    assert parts["wait"] == pytest.approx(1.0) and parts["risk"] == 0.0     # 2 spares, 1 queued
+    run.p.expected_wait = {"S2": 3.5}
+    assert run.site_utility(bs, "S2", 2, 0)[1]["wait"] == pytest.approx(3.5)
+
+
+def congestion_instance() -> Instance:
+    """Four bikes at X needing a swap at t = 0; sites S1 and S2 equidistant (1 slot), one
+    position each, sigma = 2 slots, plenty of spares: queueing is the only difference."""
+    disc = Discretisation(Delta_h=1 / 12, H=16, L=4, eps_kwh=0.02, eta=0.8)
+    edges = {("X", "S1"): 1, ("X", "S2"): 1, ("S1", "S2"): 1, ("S2", "S1"): 1}
+    routes = {uv: Route(n * disc.Delta_h, disc.eps_kwh, float(n)) for uv, n in edges.items()}
+    return Instance(
+        disc=disc, nodes=["X", "S1", "S2"], routes=routes,
+        bikes=[Bike(k, "X", 1) for k in range(1, 5)], orders=[],
+        facilities=[Facility("S1", "S1", swap=True, charge=False, y=1, B=4, C=0, K=8, M=1, sigma=2),
+                    Facility("S2", "S2", swap=True, charge=False, y=1, B=4, C=0, K=8, M=1, sigma=2)],
+        services=[], q_res=0, rho=0.0,
+    )
+
+
+def test_selfish_equilibrium_iterates_on_experienced_waits():
+    inst = congestion_instance()
+    assert inst.validate() == []
+    lib = build_arcs(inst)
+    s1, f1 = run_baseline(inst, lib, baseline_variant_params("r5_selfish"))
+    sched, flags, info = run_selfish_equilibrium(inst, lib, max_iter=10, tol=0.01)
+    assert_policy_ok(inst, lib, sched, flags)
+    assert 1 <= info["iterations"] <= 10 and len(info["shares"]) == info["iterations"]
+    assert info["expected_wait"][0] is None
+    assert info["shares"][0] == f1["site_choice"]["shares"]          # iteration 1 = the myopic run
+    if info["iterations"] >= 2:
+        exp1 = {j: (0.0 if w is None else w) for j, w in f1["site_choice"]["mean_wait"].items()}
+        assert info["expected_wait"][1] == pytest.approx(exp1)
+        assert len(info["max_share_change"]) == info["iterations"] - 1
+    if info["converged"]:
+        assert info["max_share_change"][-1] < 0.01
+    else:
+        assert info["iterations"] == 10
+    assert flags["equilibrium"]["iterations"] == info["iterations"]
+    assert sum(info["shares"][-1].values()) == pytest.approx(1.0)
+    one = run_selfish_equilibrium(inst, lib, max_iter=1)[2]
+    assert one["iterations"] == 1 and not one["converged"]
+    with pytest.raises(ValueError):
+        run_selfish_equilibrium(inst, lib, BaselineParams())               # not a LOGIT policy
+    with pytest.raises(ValueError):
+        run_selfish_equilibrium(inst, lib, averaging="ema")
+
+
+# ---- M4: compliance helper ------------------------------------------------------
+def test_select_compliant_bikes():
+    inst = congestion_instance()
+    assert select_compliant_bikes(inst, 0.0) == [] and select_compliant_bikes(inst, 1.0) == [1, 2, 3, 4]
+    half = select_compliant_bikes(inst, 0.5, seed=3)
+    assert len(half) == 2 and half == select_compliant_bikes(inst, 0.5, seed=3)
+    assert len(select_compliant_bikes(inst, 0.3)) == 1                     # round(1.2) = 1
+    with pytest.raises(ValueError):
+        select_compliant_bikes(inst, 1.5)
+
+
+def test_compliance_reproduces_the_plan_and_the_policy_at_the_extremes():
+    """alpha_c = 1 with the plan's station decisions reproduces a clean plan exactly (here the
+    toy REORDER_POINT baseline, 14.5); alpha_c = 0 with the policy's station rules equals the
+    r5_selfish run; planned swaps the live stock cannot honour make the bike defect."""
+    inst = toy_instance()
+    lib = build_arcs(inst)
+    plan, _ = run_baseline(inst, lib, {"transfer_rule": "REORDER_POINT"})
+    s1, f1 = simulate_compliance(inst, lib, plan, 1.0)
+    assert_policy_ok(inst, lib, s1, f1)
+    assert {k: sorted(v) for k, v in s1.x.items()} == {k: sorted(v) for k, v in plan.x.items()}
+    assert (s1.u, s1.c, s1.h, s1.z, s1.n) == (plan.u, plan.c, plan.h, plan.z, plan.n)
+    assert cost(inst, lib, s1)["total"] == pytest.approx(14.5)
+    comp = f1["compliance"]
+    assert comp["compliant"] == [1, 2] and comp["compliant_final"] == [1, 2] and comp["defected"] == []
+    assert comp["planned_swaps_done"] == 1 and f1["transfer_rule_effective"] == "PLAN"
+    # alpha_c = 0, policy station layer == r5_selfish itself
+    s0, f0 = simulate_compliance(inst, lib, plan, 0.0, station_plan="policy")
+    s_sf, _ = run_baseline(inst, lib, baseline_variant_params("r5_selfish"))
+    assert path_sig(s0, lib) == path_sig(s_sf, lib) and s0.c == s_sf.c and s0.z == s_sf.z and s0.u == s_sf.u
+    assert_policy_ok(inst, lib, s0, f0)
+    # all compliant but the policy's station layer (no transfers): bike 1's planned swap at A
+    # at t = 3 finds no battery -> it defects and order 3 returns to the policy queue
+    sd, fd = simulate_compliance(inst, lib, plan, 1.0, station_plan="policy")
+    assert_policy_ok(inst, lib, sd, fd)
+    assert fd["compliance"]["defected"] == [(1, 3, "no_battery")] and fd["compliance"]["compliant_final"] == [2]
+    assert sd.u[3] == 1
+    # explicit compliant list and validation
+    s_e, f_e = simulate_compliance(inst, lib, plan, 0.5, compliant=[2])
+    assert f_e["compliance"]["compliant"] == [2]
+    assert_policy_ok(inst, lib, s_e, f_e)
+    with pytest.raises(ValueError):
+        simulate_compliance(inst, lib, plan, 0.5, compliant=[9])
+    with pytest.raises(ValueError):
+        simulate_compliance(inst, lib, plan, 0.5, station_plan="ilp")
+
+
+def test_compliance_with_the_ilp_schedule_on_the_toy():
+    """The toy ILP schedule (12.5) is reproduced exactly at alpha_c = 1; partial compliance
+    gives clean schedules between the plan and the policy."""
+    pytest.importorskip("gurobipy")
+    from ebike_swap_sim import ilp
+    inst = toy_instance()
+    lib = build_arcs(inst)
+    plan, stats = ilp.solve(inst, lib, time_limit=60, threads=3)
+    assert stats["obj"] == pytest.approx(12.5)
+    s1, f1 = simulate_compliance(inst, lib, plan, 1.0)
+    assert_policy_ok(inst, lib, s1, f1)
+    assert {k: sorted(v) for k, v in s1.x.items()} == {k: sorted(v) for k, v in plan.x.items()}
+    assert cost(inst, lib, s1)["total"] == pytest.approx(12.5) and f1["compliance"]["defected"] == []
+    for alpha in (0.5, 0.0):
+        s, f = simulate_compliance(inst, lib, plan, alpha, seed=1)
+        assert_policy_ok(inst, lib, s, f)
+        assert len(f["compliance"]["compliant"]) == round(alpha * 2)
+
+
+# ---- all round-5 variants: hard families, inventory, non-anticipativity ---------------
+def _hand_built():
+    return [toy_instance(), battery_swap_p7_instance(), one_bike_two_orders(), two_site_instance(),
+            colocated_station(R_end=1), range_instance(), reservation_instance(), transfer_instance(),
+            congestion_instance(), dead_zone_instance(), jit_instance()]
+
+
+def test_round5_variants_clean_on_hand_built_instances():
+    for inst in _hand_built():
+        lib = build_arcs(inst)
+        for name in R5_VARIANTS:
+            s, f = run_baseline(inst, lib, baseline_variant_params(name))
+            assert_policy_ok(inst, lib, s, f)
+            o = f["outages"]
+            assert 0 <= o["outage_episodes"] <= o["swap_episodes"]
+            assert o["reservations_used"] <= o["reservations_made"]
+            assert sum(f["site_choice"]["decisions"].values()) >= 0
+
+
+def test_round5_variants_clean_on_generated_families():
+    from experiments import common as Cx
+    for fam in ("small", "usd4h"):
+        inst = Cx.make_instance(fam, seed=0)
+        lib = build_arcs(inst, **Cx.pruning_for(inst))
+        for name in R5_VARIANTS:
+            s, f = run_baseline(inst, lib, baseline_variant_params(name))
+            assert_policy_ok(inst, lib, s, f)
+
+
+def _decisions_before(inst, lib, sched, T0):
+    """Signature of every decision taken at a boundary t < T0: bike arcs with l < T0 (by
+    content, not id), charging c_jqt with t < T0, loads of services departing before T0."""
+    arcs = {k: [(a.kind, a.src, a.dst, a.order, a.fac) for a in sched.path(k, lib) if a.kind != "term" and a.l < T0]
+            for k in sched.x}
+    c = {key: v for key, v in sched.c.items() if key[2] < T0}
+    z = {key: v for key, v in sched.z.items() if inst.service(key[0]).l < T0}
+    return arcs, c, z
+
+
+def test_round5_rules_are_non_anticipative():
+    """Shifting the release (and ready / promise times) of every order released at or after
+    T0 by one slot leaves every decision taken before T0 unchanged, for every variant
+    (information sets in the module docstring; range_typical='released')."""
+    from experiments import common as Cx
+    base = Cx.make_instance("usd4h", seed=1)
+    T0 = base.H // 2
+    late = Instance.from_json(base.to_json())
+    for o in late.orders:
+        if o.r >= T0 and o.a + 1 < late.H and o.b + 1 <= late.H:
+            o.r, o.a, o.b = o.r + 1, o.a + 1, o.b + 1
+    late.reindex()
+    assert late.validate() == []
+    assert any(o1.r != o2.r for o1, o2 in zip(base.orders, late.orders))
+    lib_b = build_arcs(base, **Cx.pruning_for(base))
+    lib_l = build_arcs(late, **Cx.pruning_for(late))
+    for name in R5_VARIANTS:
+        sb, _ = run_baseline(base, lib_b, baseline_variant_params(name))
+        sl, _ = run_baseline(late, lib_l, baseline_variant_params(name))
+        assert _decisions_before(base, lib_b, sb, T0) == _decisions_before(late, lib_l, sl, T0), name

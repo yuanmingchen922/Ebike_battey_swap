@@ -38,6 +38,18 @@ defaults OFF except ``dominance``):
   itself be cut (``a_i - tau_r > b_i + start_slack``); the combination is then
   lossier than either option alone.
 * ``reposition_targets``: move arcs only into this node set.
+* ``reposition_target_radius``: ``{node: blocks}`` (R7 siting scale-up, approach radius):
+  a move arc INTO one of these nodes is created only from a tail node within that many
+  grid blocks (Manhattan distance of ``(ix, iy)`` nodes; scalar nodes: absolute
+  difference).  Nodes absent from the dict (depots, non-candidate targets) are not
+  restricted.  ``None`` (default) = no restriction, byte-identical libraries.
+* ``reposition_radius_exempt_states``: ``[(node, q), ...]`` tail states whose move arcs are
+  NOT subject to ``reposition_target_radius`` (R7, 2026-10-21: the start states ``(v0_k, q0_k)``
+  of the scenario's bikes, at every ``t``, so that a bike's first approach to a far site is a
+  single move arc; without it a bike that starts far from a one-site layout with little charge
+  can lose the only terminal-feasible path to two-hop rounding).  The set is bike-independent
+  (one set per scenario), so the template and every pricing library apply it identically.  A
+  JSON round-trip (node tuples as lists) is tolerated.  Only read when the radius is set.
 * ``tau_max``: delivery arcs only from ``v`` with ``tau(v -> o_i) <= tau_max``.
 * ``start_slack``: delivery arcs only with ``t <= b_i + start_slack``.
 * ``reachable_pruning``: drop arcs whose tail state is unreachable from ``s_k``.
@@ -61,6 +73,26 @@ from .or_instance import Instance, Node, DEFAULT_OPTIONS
 State = Tuple[Any, int, int]
 SINK: Tuple[str] = ("sink",)
 KINDS = ("wait", "move", "deliver", "swap", "term")
+
+
+def node_blocks(a: Any, b: Any) -> int:
+    """Grid distance in blocks of two nodes: Manhattan distance of ``(ix, iy)`` tuples,
+    absolute difference of scalar (toy) node ids."""
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return sum(abs(int(x) - int(y)) for x, y in zip(a, b))
+    return abs(int(a) - int(b))
+
+
+def radius_exempt_states(raw: Any) -> Dict[Node, Tuple[int, ...]]:
+    """``{node: sorted q levels}`` of the ``reposition_radius_exempt_states`` option; list nodes
+    (a JSON round-trip of tuple nodes) are turned back into tuples."""
+    out: Dict[Node, Set[int]] = {}
+    for item in raw or ():
+        v, q = item
+        if isinstance(v, list):
+            v = tuple(v)
+        out.setdefault(v, set()).add(int(q))
+    return {v: tuple(sorted(qs)) for v, qs in out.items()}
 
 
 class InfeasibleInstanceError(ValueError):
@@ -91,6 +123,20 @@ class Arc:
     order: Any = None
     fac: Any = None
     theta: float = 0.0
+
+
+def arc_key(a: Arc) -> Tuple[str, Tuple, Tuple, Any, Any]:
+    """Bike-independent identity ``(kind, src, dst, order, fac)`` of an arc (plan item
+    O1, E2 (5), (9)).
+
+    Within one bike's network the key is unique: wait/move arcs are fixed by their
+    end states (one offered route per ordered node pair), deliver arcs by order and
+    start state, swap arcs by facility and start state, real terminal arcs by
+    ``(v, H, q)`` and facility, the dummy terminal arc by ``fac = None``.  All other
+    fields (``l, u, d_km, g, theta``) are functions of the key, so two bikes'
+    copies of the same key describe the same action; ``aggregate.AggregatedNetwork``
+    merges them into one integer flow variable."""
+    return (a.kind, a.src, a.dst, a.order, a.fac)
 
 
 # ---------------------------------------------------------------------------
@@ -370,12 +416,19 @@ def _template_specs(inst: Instance, opts: Dict[str, Any],
                 specs.append(("wait", (v, t, q), (v, t + 1, q), t, t + 1, 0.0, 0, None, None, 0.0))
     # move (reposition)
     targets = opts.get("reposition_targets")
+    radius = opts.get("reposition_target_radius")
+    exempt = radius_exempt_states(opts.get("reposition_radius_exempt_states")) if radius is not None else {}
     for (v, w), r in inst.routes.items():
         if targets is not None and w not in targets:
             continue
+        restricted = radius is not None and w in radius and node_blocks(v, w) > int(radius[w])
+        if restricted and v not in exempt:
+            continue
         tau, g = disc.tau(r.T_h, distinct=True), disc.g(r.E_kwh)
+        # outside the radius only from the exempt start levels of v (at every t)
+        q_levels = [q for q in exempt[v] if g <= q <= L] if restricted else range(g, L + 1)
         for t in range(0, H - tau + 1):
-            for q in range(g, L + 1):
+            for q in q_levels:
                 specs.append(("move", (v, t, q), (w, t + tau, q - g), t, t + tau, r.d_km, g,
                               None, None, 0.0))
     # deliver

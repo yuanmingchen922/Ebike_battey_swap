@@ -1,4 +1,4 @@
-# ebike_swap_sim — API contract for `ilp.py`, `baseline.py`, `generator.py` (+ round-2 modules)
+# ebike_swap_sim — API contract for `ilp.py`, `baseline.py`, `generator.py` (+ round-2 and round-5 modules)
 
 Package root: `ebike_swap_sim/ebike_swap_sim/`. Run from `ebike_swap_sim/` with
 `PYTHONPATH=.` (`pytest.ini` sets `pythonpath = .`, so `python3 -m pytest tests/ -x -q`
@@ -44,6 +44,12 @@ mutating the lists. Node ids may be str/int/tuple (tuples survive JSON). Equalit
   (treat every facility as swap+charge), `fixed_facilities` (None = fixed iff `y/B/C`
   given), `lexicographic` (min Σu first), `battery_swap_v1_bounds` (add `y <= B`,
   `C <= B`). `budget`/`zeta` (33) live on the instance itself.
+* data fixings (round 5, M9): `forced_transfers` (list of `{'service', 'level'}`, written by
+  `generator.add_battery_lockout`): `ilp.build_model` sets `h_e >= 1` (and `z_eq >= 1` for a
+  given level) on these services (variable bounds of (10), no row changes;
+  `switches['forced_transfers']` = number fixed; under `no_transfers` they are skipped and
+  counted in `switches['forced_transfers_skipped']`); the baseline executes them
+  (`flags['forced_transfers']`) and never uses them for its own transfer rules.
 
 Reference instances: `toy_instance()` (E2 pp.10-15, J* = 12.5) and
 `battery_swap_p7_instance()` (one co-located station, `L=2, B=C=M=1, H=4`, no orders).
@@ -97,6 +103,10 @@ Pre-check: a forward reachability pass from `s_k` is always run; a bike with no 
 real terminal arc raises `InfeasibleInstanceError` (`strict=True`, no dummy arc) or is
 listed in `lib.infeasible_bikes`.
 
+`arc_key(a) -> (kind, src, dst, order, fac)` (round 5, O1) is the identity of an arc
+independent of the bike (unique within one bike network); the aggregated flow
+(`aggregate.AggregatedNetwork`) merges the copies of one key across bikes of a class.
+
 Suggested ILP mapping: `x[a.id]` binary for `a in lib.arcs`; (5) for each `k`, each
 `w in lib.states(k)`; (6) over `lib.delivery_arcs(i)`; (9) `x[a.id] <= y[a.fac]` for
 real terminal arcs; (12) `s_jqt = sum x over lib.swap_arcs_at(j,t,q)`; (22) `sum x over
@@ -125,10 +135,17 @@ Helpers: `sched.path(k, lib)` (arcs sorted by `(l,u)`), `sched.chosen_arcs(lib)`
 (12), `transfer_counts(inst, z) -> (D[(j,q,t)], A[(j,q,t)])` (11), `in_transit(inst, z) -> [m_t]`
 (24, strict `l_e < t < u_e`), `reconstruct_inventory(inst, lib, x, c, z, B=None) -> n` (13)+(16).
 
-`cost(inst, lib, sched) -> dict`: `C_setup` (27), `C_elec` (28), `C_travel` (29),
-`C_orders` (30) with `C_orders_parts = {unserved, response, lateness}` (31), `C_reb` (32),
-`C_dummy_terminal` (0 in the written model), `total` (26). Toy optimum:
-`total = 12.5 = 4 (travel) + 0.1 (elec) + 0 (unserved) + 6 (response) + 2.4 (reb)`.
+`cost(inst, lib, sched, end_price=None, bike_term='positive') -> dict`: `C_setup` (27),
+`C_elec` (28), `C_travel` (29), `C_orders` (30) with `C_orders_parts = {unserved, response,
+lateness}` (31), `C_reb` (32), `C_dummy_terminal` (0 in the written model), `total` (26). Toy
+optimum: `total = 12.5 = 4 (travel) + 0.1 (elec) + 0 (unserved) + 6 (response) + 2.4 (reb)`.
+Round 5 (M1) adds three reporting keys that are NOT part of (26): `C_end_adjust`,
+`C_end_adjust_parts` and `total_end_adjusted = total + C_end_adjust`, where
+`C_end_adjust = pi_ref (eps/eta) [sum_j sum_q (L - q)(n_jqH - n_jq0) + sum_k (q0_k - q_k(H))^+]`
+(`end_state_adjustment(inst, lib, sched, end_price=None, bike_term='positive'|'signed'|'none')`;
+`end_reference_price(inst, end_price=None)` = argument, `meta['end_price']`, else the mean of
+`pi_jt` over `C x T`; `bike_end_levels(inst, lib, sched)`). `total` is unchanged, so the ILP
+self-certification `cost == objective` still holds.
 
 `check(inst, lib, sched) -> dict`:
 `{'ok', 'n_violations', 'families': {name: {'count', 'examples': [str]}}, 'identity_24_ok',
@@ -144,7 +161,16 @@ than enforce them; this checker lists them like every other family.
 `wait_before_swap` (queue proxy), `kwh_purchased`, `kwh_stored`, `charge_steps_facility`,
 `peak_kw_facility`, `peak_kw_group`, `transfers_used`, `batteries_moved(_by_level)`,
 `in_transit`, `full_stock[j]` (`n_jLt`, t = 0..H), `stock[j]` (`N_jt`), `stockout_slots`,
-`end_full_total`, `end_target_shortfall`, `per_platform`, `bike_end_levels`, `facility_vars`.
+`end_full_total`, `end_target_shortfall`, `per_platform`, `bike_end_levels`, `facility_vars`;
+round 5: `r5` = `metric_pack(inst, lib, sched)` (A3: `sbur`, `min_sbur`, `mean_sbur`,
+`swaps_per_storage_slot`, `bsr`, `bsr_unblocked`, `batteries_saved` / `batteries_saved_total`,
+station time per swap, detour km / min, `reserve_breach_bikes`, `stranded_bikes`,
+`energy_refused_orders`, `outage_rate`, `empty_km` / `empty_km_per_bike_hour` / `empty_km_share`,
+`peak_kw_network`, `peak_kw_facility`, `kwh_by_price`, `peak_kw_by_price`; scalar keys listed in
+`R5_SCALAR_KEYS`), and, only on a lock-out instance (M9, `meta['lockout']['sink']`), `lockout`
+(`locked_batteries`, `forced_executed`, `end_full_total_excl_sink`, `end_share_excl_sink`,
+`transfers_used_excl_forced`, ...: the stock metrics without the dummy sink, since (18) as
+written counts it).
 
 ## 4. Conventions every module must respect
 
@@ -242,3 +268,89 @@ than enforce them; this checker lists them like every other family.
   R2.3 policy is identical under both target settings. Helpers: `unservable_orders(inst, lib)`,
   `demand_key(inst, include_bike_nodes=True, include_facilities=False)`, `demand_md5`,
   `baseline_pruning_flags(flags)`, `pair_anomalies(rec)`.
+
+## 6. Round-5 modules and options (`notes/reading_to_model.md`; DECISIONS "R5 implementation notes")
+
+No E2 equation changes: every item below is a parameter, data, policy, wrapper or solver
+option. Plan item ids (A1-A7, M1-M10, O1) are cited in the docstrings.
+
+* `config.py` (A1) -- `ENERGY_CALIBRATIONS` (`'legacy'`, `'ebaas'`: 25 Wh/km = eBaaS 40 km/kWh,
+  0 Wh per signal, 0.6 Wh per metre of climb, `eps` 25 Wh, `L` 24, `energy_rounding='concat'`,
+  `q_res` 50 Wh = 2 levels, `sigma` 1 slot), `EBAAS_FACTS`, `HOME_CHARGING_DEFAULTS`,
+  `energy_calibration(name='ebaas', Delta_h=5/60, eta=0.9, **overrides)` (adds `L`, `battery_wh`,
+  `eps_kwh`, `q_res`, `p_ch_kw`).
+* `costs.py` (M5, A6, M10) -- `TARIFFS` / `load_tariff('tou'|'tou_summer'|'flat')` (pi 0.132,
+  pi_peak 0.442 / 0.74 summer, `price_peak_hours (8, 22)`), `crf`, `allocate_per_window`,
+  `FLEET_COST_DEFAULTS`, `allocated_bike_cost`, `pack_cost_scaling`, `position_cost_per_window`,
+  `demand_charge_per_window`, `demand_charge_proxy`.
+* `generator.py` -- `make_synthetic_instance(..., energy_calibration=, tariff=, home_charging=,
+  lockout=)` (all `None` by default: round-1..4 families regenerate byte-identically,
+  `tests/test_r5_instances.py` asserts the md5s); `services_spec={'mode': 'cyclic', ...}` (M8);
+  `R5_TIME_PROFILE` and `R5_FAMILIES` (`r5_stress4h`, `r5_stress8h`, M5), `make_r5_instance(family,
+  seed, **overrides)` (`meta['r5']` with `riding_intensity`); `home_charging_counterfactual` (A5);
+  `add_battery_lockout` / `apply_forced_transfers` (M9; `ilp.build_model` now applies the fixings
+  itself, `apply_forced_transfers` stays as an idempotent helper); `fleet_spare_pack_grid`,
+  `make_fleet_sweep_instance` (A6); `swap_position_variants`, `site_power_cap_sweep`,
+  `charger_speed_variants` (M10).
+* `evaluate.py` (A3, M1, M9) -- see section 3 (`metric_pack`, `end_state_adjustment`,
+  `cost(...)['C_end_adjust' / 'total_end_adjusted']`, `metrics(...)['r5' / 'lockout']`).
+* `baseline.py` (M2-M4) -- `BaselineParams` gains `swap_rule ('THRESHOLD'|'RANGE')`,
+  `range_margin`, `range_cap_frac`, `range_typical`, `reservation`, `reservation_timeout`,
+  `transfer_lookback`, `transfer_lead`, `transfer_prior_rate`, `stockout_cost_mode`,
+  `orders_per_stockout`, `stockout_wait_slots`, `transfer_load_cap`, `transfer_reserve`,
+  `site_choice ('NEAREST'|'LOGIT')`, `logit_alpha/beta/gamma/scale`, `choice_seed`,
+  `expected_wait`; `TRANSFER_RULES` adds `'COST_AWARE'`. Defaults reproduce round 2 bit for bit.
+  `BASELINE_VARIANTS`: `default` (= `r2`), `round1`, `legacy`, `r5_range`, `r5_transfer`,
+  `r5_selfish`, `r5` (RANGE + reservation + COST_AWARE + stock-aware + DEMAND_AWARE);
+  `DEFAULT_VARIANT_NEW = 'r5'`. New functions `poisson_sf`, `logit_probabilities`,
+  `run_selfish_equilibrium(inst, arcs, params=None, max_iter=10, tol=0.01, averaging='msa')`,
+  `select_compliant_bikes`, `simulate_compliance(inst, arcs, plan, alpha_c, ..., station_plan=
+  'plan'|'policy')`. Flags (all variants): `swap_rule_effective`, `site_choice_effective`,
+  `outages`, `range_rule`, `site_choice`, `cost_aware`; `forced_transfers` on lock-out instances.
+  Information sets are non-anticipative (documented per rule, tested).
+* `aggregate.py` (O1, no gurobipy) -- `AggregatedNetwork(inst, lib, mode='auto'|'single'|'groups',
+  prune=True)` (`arcs`, `commodities`, `ub`, `term_ub`, `aggregate_x`, `decompose`, `summary`),
+  `aggregate_network`, `decompose_flow`, `AggregationError` (raised if two bikes' copies of one
+  arc key differ). `ilp.build_model(..., aggregate=False, aggregate_mode='auto')` and
+  `ilp.solve(..., aggregate=...)`: with `aggregate=True`, `x` is keyed by aggregated arc id and
+  holds integer flows, the returned `Schedule` is per bike (path decomposition) and is certified
+  by `evaluate.check` / `cost` exactly as before; `stats` gains `aggregate` and `n_agg_arcs`.
+  `ilp.build_submodel(inst, lib, model, *, facility_vars, prefix, aggregate=True, ...)` is the
+  shared-model scenario copy used by `bilevel.integrated_stochastic_ilp`. Exactness requires that
+  no E2 parameter depends on the bike beyond `A_k` and `s_k` (true today).
+* `rolling.py` (M7) -- `rolling_horizon(inst, W=None, k=None, lookahead_min=0.0, *, lib=None,
+  final_targets='written'|'m1'|'relaxed', window_targets='last'|'every', forecast=None,
+  n_scenarios=1, aggregate=False, threads=3, time_limit=60.0, ...) -> RollingResult` (windows
+  solve the unchanged E2 ILP; the carried state enters as RHS / bounds of (13), (16), (22) and
+  wait-arc bounds; the stitched day schedule is priced and checked by `evaluate`),
+  `window_instance`, `BootstrapForecast(inst, pool='all'|'released')`, `forecast_facility_plan`,
+  `offline_vs_online`, `lookahead_slots`, `hard_families_ok`, `HARD_EXEMPT_FAMILIES`.
+* `rl_env.py` (A7, needs gymnasium) -- `StationEnv(factory=None, instances=None, config=EnvConfig)`:
+  rider steps 1-7 from the baseline (`rider_variant`, default `'r2'`), the agent sets charging per
+  charge site (bounded by (20)) and loads per service (bounded by `U_e`, (10)); clipped by (14),
+  (15), (21), reserved full batteries (M2) never leave, forced M9 transfers are executed as data;
+  reward = `-(Phi_{t+1} - Phi_t) * reward_scale` with `Phi` = `evaluate.cost` of the partial
+  schedule (+ the M1 adjustment at `H`, same reference price as `evaluate.end_reference_price`).
+  `make_family_factory`, `rider_params`, `charge_cap`, `adjusted_cost`, `end_state_adjustment`.
+* `sites_nyc.py` / `data_nyc.py` (M6) -- `data_nyc.MANHATTAN_BOX`, `MANHATTAN_ENTRY_POINTS`,
+  `StudyRegion`, `REGIONS` (`'manhattan_s110'`), `resolve_region`, `RegionZoneWeights`,
+  `region_restaurants`, `entry_point_depots`; `sites_nyc.R5_MANHATTAN_FAMILY` (`'r5_manhattan'`),
+  `R5_MANHATTAN_PARAMS`, `SITING_POST`, `lattice_candidates` (2 km cells), `family_candidates`,
+  `family_depots`, `family_access_D`, `access_radius_blocks` (eBaaS 2 km coverage).
+* `bilevel.py` (M4, A4, O1) -- `POLICIES = ('ilp', 'baseline', 'selfish')`, `cross_evaluate`
+  under all three followers, `compliance_sweep`, `RULES` / `rule_layout` / `rule_baselines`
+  (CSCD / CSTC / CSAV), `present_day_sites`, `capacity_matched_layout`, `LEVERS` / `lever_table`,
+  `apply_variant`, `aggregate_available`; `LowerLevelEvaluator(aggregate=...)`.
+* `experiments/common.py` -- "R5 sizes": `R5_SIZES` registered in `FAMILIES` with
+  `builder: 'r5'` (`make_instance` calls `generator.make_r5_instance`; `meta['r5_family']`),
+  `R5_FAMILY_NAMES`, `R5_PRUNING` (reachable pruning, applied by `pruning_for` to round-5
+  synthetic instances only), `R5_ILP_KWARGS = {'aggregate': True}`; baseline variants
+  `baseline_r5`, `baseline_r5_range`, `baseline_r5_transfer`, `baseline_r5_selfish`; M1 helpers
+  `end_target_copy`, `boundary_grid`, `boundary_label`, `BOUNDARY_RHOS`, `BOUNDARY_R_ENDS`,
+  `PERIODIC_LABEL` (`relax_end_targets` = the `rho0_R0` cell); `flatten_r5`; `run_pair` records
+  gain `*_C_end_adjust*`, `*_total_end_adjusted`, `gap_vs_*_pct_end_adjusted`, `baseline_r5_*`,
+  `ilp_r5_*`, `boundary_variant`.
+* Scripts: `experiments/rolling_horizon.py` (E7: offline / rolling / forecast / baseline,
+  `--dry-run`, `--analyse`), `experiments/a7_rl.py` (`train | evaluate | all`),
+  `experiments/e9_bilevel_siting.py --manhattan | --baselines | --levers | --policy-aware |
+  --compliance` (default family `r5_manhattan`).

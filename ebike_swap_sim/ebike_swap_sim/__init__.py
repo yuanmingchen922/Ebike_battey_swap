@@ -14,9 +14,15 @@ generator    -- synthetic instance generator (lazy import)
 costs        -- round-2 cost variants (DECISIONS R2.1; lazy import)
 data_nyc     -- semi-real NYC instances: DOHMH restaurants, NTA zones, study box (R2.4; lazy)
 acs_weights  -- ACS literature zone weights (R2.4; lazy)
+sites_nyc    -- E9 candidate sites, siting families, layout instances; r5_manhattan (M6; lazy)
+bilevel      -- E9 bi-level siting: evaluator, exhaustive / greedy / integrated ILP (lazy)
+aggregate    -- O1 aggregated integer flow on the union (v, t, q) network (no gurobipy; lazy)
+rolling      -- M7 rolling-horizon wrapper and bootstrap forecast (gurobipy only when solving; lazy)
+rl_env       -- A7 gymnasium station-layer environment around the baseline (needs gymnasium; lazy)
 
-The modules ``ilp``, ``baseline``, ``generator``, ``costs``, ``data_nyc`` and
-``acs_weights`` are imported lazily through ``ebike_swap_sim.<name>`` so that the
+The modules ``ilp``, ``baseline``, ``generator``, ``costs``, ``data_nyc``,
+``acs_weights``, ``sites_nyc``, ``bilevel`` and the round-5 modules ``aggregate``,
+``rolling`` and ``rl_env`` are imported lazily through ``ebike_swap_sim.<name>`` so that the
 package imports without gurobipy / pandas-heavy data loaders.
 """
 from __future__ import annotations
@@ -51,7 +57,8 @@ from .evaluate import (
     transfer_counts,
 )
 
-_LAZY_MODULES = {"ilp", "baseline", "generator", "costs", "data_nyc", "acs_weights", "sites_nyc", "bilevel"}
+_LAZY_MODULES = {"ilp", "baseline", "generator", "costs", "data_nyc", "acs_weights", "sites_nyc", "bilevel",
+                 "aggregate", "rolling", "rl_env"}
 
 __all__ = [
     "SimConfig", "GridNetwork", "RoadNetwork", "GridRoute",

@@ -6,11 +6,11 @@ Toy instance: {'bikes': 2, 'orders': 3, 'nodes': 3, 'routes': 6, 'facilities': 2
 
 | case | method | switches | status | total | expected | match | C_travel | C_elec | unserved | response | lateness | C_reb | runtime_s | check_ok | reported_families | identity_24_ok | obj_eq_cost | mip_start_accepted | lex_min_unserved |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| toy | ILP | written model | OPTIMAL | 12.500 | 12.500 | True | 4 | 0.100 | 0 | 6 | 0 | 2.400 | 0.003 | True | {} | True | True | - | - |
+| toy | ILP | written model | OPTIMAL | 12.500 | 12.500 | True | 4 | 0.100 | 0 | 6 | 0 | 2.400 | 0.015 | True | {} | True | True | - | - |
 | toy | ILP | rho=0 | OPTIMAL | 11.200 | 11.200 | True | 4 | 0 | 0 | 6 | 0 | 1.200 | 0.002 | True | {} | True | True | - | - |
 | toy | ILP | no_transfers | OPTIMAL | 106 | 106 | True | 2 | 0 | 100 | 4 | 0 | 0 | 0.001 | True | {} | True | True | - | - |
 | toy | ILP | lexicographic | OPTIMAL | 12.500 | 12.500 | True | 4 | 0.100 | 0 | 6 | 0 | 2.400 | 0.005 | True | {} | True | True | - | 0 |
-| toy | ILP | lexicographic+no_transfers | OPTIMAL | 106 | 106 | True | 2 | 0 | 100 | 4 | 0 | 0 | 0.002 | True | {} | True | True | - | 1 |
+| toy | ILP | lexicographic+no_transfers | OPTIMAL | 106 | 106 | True | 2 | 0 | 100 | 4 | 0 | 0 | 0.003 | True | {} | True | True | - | 1 |
 | toy | baseline | transfer_rule=NONE | - | 108 | 108 | True | 4 | 0 | 100 | 4 | 0 | 0 | 0.000 | True | {} | True | - | - | - |
 | toy | baseline | transfer_rule=REORDER_POINT | - | 14.500 | 14.500 | True | 6 | 0.100 | 0 | 6 | 0 | 2.400 | 0.000 | True | {} | True | - | - | - |
 | toy | baseline | variant=default, transfer_rule=NONE | - | 108 | 108 | True | 4 | 0 | 100 | 4 | 0 | 0 | 0.000 | True | {} | True | - | - | - |

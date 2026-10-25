@@ -29,6 +29,9 @@ arc library rebuilt), ``fixed_facilities`` (``True``: fix ``y/B/C`` where given;
 ``False``: all free), ``budget`` and ``zeta`` (33), ``lexicographic`` (first
 ``min sum_i u_i``, then min cost with that count fixed, E2 p.9) and
 ``battery_swap_v1_bounds`` (``y_j <= B_j``, ``C_j <= B_j`` of the Sep-29 model).
+``aggregate=True`` (plan item O1, default ``False``) builds the equivalent aggregated
+integer-flow model on the union ``(v, t, q)`` network (``ebike_swap_sim.aggregate``);
+:func:`build_submodel` exposes it for the integrated stochastic siting model.
 
 Typical use::
 
@@ -53,12 +56,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import gurobipy as gp
 from gurobipy import GRB
 
+from .aggregate import AggregatedNetwork
 from .arcs import SINK, ArcLibrary, build_arcs
+from .costs import check_lib_prices
 from .evaluate import Schedule, check, cost, facility_vars, reconstruct_inventory
 from .or_instance import Instance
 
-__all__ = ["ILPModel", "ILPConsistencyError", "build_model", "solve", "colocated_instance",
-           "status_name"]
+__all__ = ["ILPModel", "ILPConsistencyError", "build_model", "build_submodel", "solve",
+           "colocated_instance", "status_name"]
 
 def _status_names() -> Dict[int, str]:
     names: Dict[int, str] = {}
@@ -161,7 +166,8 @@ class ILPModel:
                  params: Optional[Dict[str, Any]] = None, names: Optional[bool] = None,
                  model: Optional[gp.Model] = None, prefix: str = "",
                  facility_vars: Optional[Tuple[Dict[Any, gp.Var], Dict[Any, gp.Var], Dict[Any, gp.Var]]] = None,
-                 set_objective: bool = True) -> None:
+                 set_objective: bool = True, aggregate: bool = False,
+                 aggregate_mode: str = "auto", keep_rows: bool = False) -> None:
         """With the defaults the model owns its ``gp.Env`` / ``gp.Model`` and behaves as
         documented above.  The three optional *shared-model* arguments (bi-level siting,
         ``ebike_swap_sim.bilevel.integrated_stochastic_ilp``) make the instance a
@@ -172,10 +178,27 @@ class ILPModel:
         and the rows (33) are left to the caller (they are on the shared variables only),
         and with ``set_objective=False`` the objective (26) is computed in
         ``self.objective`` / ``self.components`` but not set on the model.  Gurobi
-        parameters are not touched on a shared model."""
+        parameters are not touched on a shared model.
+
+        ``aggregate=True`` (plan item O1) builds the aggregated integer-flow form of the
+        same E2 rows on :class:`~ebike_swap_sim.aggregate.AggregatedNetwork` (``self.agg``;
+        ``aggregate_mode`` ``'auto'|'single'|'groups'``): ``x`` is then keyed by
+        aggregated arc id and holds integer flows, (5) has supplies ``m_c``, (9) reads
+        ``sum_a X_a <= U_j y_j``; (6), (12), (22), (29)-(30) are unchanged sums.  The
+        returned :class:`Schedule` is per bike (path decomposition), so ``evaluate``
+        certifies it as before.  ``aggregate=False`` is the original per-bike model.
+
+        ``keep_rows=True`` (plan item O2, Benders bound LP; default ``False`` = the model is
+        built exactly as before) stores every E2 row in ``self.rows[family][label] = Constr``
+        (``family`` = ``'(5)'``, ``'(9)'``, ..., ``label`` = the row name without prefix, e.g.
+        ``'end_local[M08:SC]'``), so that rows can be addressed when names are switched off."""
         t0 = time.perf_counter()
         if lib.inst is not inst and lib.inst != inst:
             raise ValueError("the arc library was built on a different instance")
+        # round 6: theta (31) is stored on the arcs at build time; a library re-bound to a
+        # repriced instance (other w / v) would price deliveries with stale coefficients.
+        # O(|I|) sample of the delivery arcs; raises costs.PricingMismatchError (a ValueError).
+        check_lib_prices(inst, lib)
         self.inst_original = inst
         self.lib_original = lib
         if colocated and not all(f.swap and f.charge for f in inst.facilities):
@@ -192,7 +215,13 @@ class ILPModel:
             "battery_swap_v1_bounds": bool(battery_swap_v1_bounds),
             "threads": threads, "time_limit": time_limit,
         }
-        self._names = (len(lib) <= 300_000) if names is None else bool(names)
+        self.aggregate = bool(aggregate)
+        self.agg: Optional[AggregatedNetwork] = None
+        if self.aggregate:
+            self.switches["aggregate"] = True
+            self.agg = AggregatedNetwork(inst, lib, mode=aggregate_mode)
+        n_model_arcs = len(self.agg) if self.agg is not None else len(lib)
+        self._names = (n_model_arcs <= 300_000) if names is None else bool(names)
         self._prefix = str(prefix)
         self._shared_facilities = facility_vars
         self._set_objective = bool(set_objective)
@@ -211,6 +240,8 @@ class ILPModel:
         self.objective: gp.LinExpr = gp.LinExpr()
         self.sum_u: gp.LinExpr = gp.LinExpr()
         self.n_rows: Dict[str, int] = defaultdict(int)
+        self.keep_rows = bool(keep_rows)
+        self.rows: Dict[str, Dict[str, gp.Constr]] = {}
         self._start_values: Optional[Dict[gp.Var, float]] = None
         self.mip_start_info: Dict[str, Any] = {"given": False}
         self._first_incumbent: Optional[Tuple[float, float]] = None
@@ -245,9 +276,17 @@ class ILPModel:
         Cset = set(inst.Cset)
 
         # ---------------------------------------------------- one scan of the arcs
+        # per-bike model: x keyed by library arc id, ``a.k`` = bike; aggregated model
+        # (O1): x keyed by aggregated arc id, ``a.k`` = commodity
+        agg = self.agg
         out_ids: Dict[Tuple[Any, Tuple], List[int]] = defaultdict(list)
         in_ids: Dict[Tuple[Any, Tuple], List[int]] = defaultdict(list)
-        states: Dict[Any, set] = {b.id: {lib.source(b.id), SINK} for b in inst.bikes}
+        if agg is None:
+            model_arcs = lib.arcs
+            states: Dict[Any, set] = {b.id: {lib.source(b.id), SINK} for b in inst.bikes}
+        else:
+            model_arcs = agg.arcs
+            states = {com.id: set(com.supply) | {SINK} for com in agg.commodities}
         deliv_ids: Dict[Any, List[int]] = defaultdict(list)
         swap_at: Dict[Tuple[Any, int, int], List[int]] = defaultdict(list)   # (j, t, q) (12)
         occ: Dict[Tuple[Any, int], List[int]] = defaultdict(list)            # (j, tau) (22)
@@ -258,7 +297,7 @@ class ILPModel:
         theta_coef: List[float] = []
         dummy_ids: List[int] = []
         dummy_coef: List[float] = []
-        for a in lib.arcs:
+        for a in model_arcs:
             out_ids[(a.k, a.src)].append(a.id)
             in_ids[(a.k, a.dst)].append(a.id)
             st = states[a.k]
@@ -284,7 +323,12 @@ class ILPModel:
                     term_kj[(a.k, a.fac)].append(a.id)
 
         # ------------------------------------------------------------ variables
-        self.x = m.addVars(range(len(lib.arcs)), vtype=GRB.BINARY, name=self._nm("x"))
+        if agg is None:
+            self.x = m.addVars(range(len(lib.arcs)), vtype=GRB.BINARY, name=self._nm("x"))
+        else:   # O1: integer flows X_a in {0..U_a} (binary when U_a = 1)
+            self.x = m.addVars(range(len(agg.arcs)), lb=0.0, ub=[float(b) for b in agg.ub],
+                               vtype=[GRB.BINARY if b <= 1 else GRB.INTEGER for b in agg.ub],
+                               name=self._nm("x"))
         self.u = m.addVars([o.id for o in inst.orders], vtype=GRB.BINARY, name=self._nm("u"))
         self.y: Dict[Any, gp.Var] = {}
         self.B: Dict[Any, gp.Var] = {}
@@ -361,21 +405,36 @@ class ILPModel:
                 return c[j, q, t]
             return None
 
+        keep = self.keep_rows
+
         def add(name: str, expr: Any, sense: str, rhs: Any, label: str) -> None:
-            m.addLConstr(expr, sense, rhs, name=self._nm(label) if self._names else "")
+            con = m.addLConstr(expr, sense, rhs, name=self._nm(label) if self._names else "")
             self.n_rows[name] += 1
+            if keep:
+                self.rows.setdefault(name, {})[label] = con
 
         # ------------------------------------------------------------ (5) flow
-        for b in inst.bikes:
-            k = b.id
-            src = lib.source(k)
-            for w in states[k]:
-                o_ids = out_ids.get((k, w), ())
-                i_ids = in_ids.get((k, w), ())
-                expr = gp.LinExpr([1.0] * len(o_ids) + [-1.0] * len(i_ids),
-                                  [x[a] for a in o_ids] + [x[a] for a in i_ids])
-                rhs = 1 if w == src else (-1 if w == SINK else 0)
-                add("(5)", expr, GRB.EQUAL, rhs, f"flow[{k},{w}]")
+        if agg is None:
+            for b in inst.bikes:
+                k = b.id
+                src = lib.source(k)
+                for w in states[k]:
+                    o_ids = out_ids.get((k, w), ())
+                    i_ids = in_ids.get((k, w), ())
+                    expr = gp.LinExpr([1.0] * len(o_ids) + [-1.0] * len(i_ids),
+                                      [x[a] for a in o_ids] + [x[a] for a in i_ids])
+                    rhs = 1 if w == src else (-1 if w == SINK else 0)
+                    add("(5)", expr, GRB.EQUAL, rhs, f"flow[{k},{w}]")
+        else:   # O1: out - in = supply m_c at the sources, -sum m_c at the sink
+            for com in agg.commodities:
+                cid = com.id
+                for w in sorted(states[cid], key=repr):
+                    o_ids = out_ids.get((cid, w), ())
+                    i_ids = in_ids.get((cid, w), ())
+                    expr = gp.LinExpr([1.0] * len(o_ids) + [-1.0] * len(i_ids),
+                                      [x[a] for a in o_ids] + [x[a] for a in i_ids])
+                    rhs = -com.m if w == SINK else com.supply.get(w, 0)
+                    add("(5)", expr, GRB.EQUAL, rhs, f"flow[c{cid},{w}]")
 
         # ------------------------------------------------------------ (6) orders
         for o in inst.orders:
@@ -396,7 +455,13 @@ class ILPModel:
 
         # ------------------------------------------------------------ (9) terminal
         for (k, j), ids in term_kj.items():
-            add("(9)", gp.quicksum(x[a] for a in ids) - y[j], GRB.LESS_EQUAL, 0, f"term[{k},{j}]")
+            # O1: (9) summed over the bikes of commodity k: sum_a X_a <= U_kj y_j
+            if agg is None:
+                add("(9)", gp.quicksum(x[a] for a in ids) - y[j], GRB.LESS_EQUAL, 0, f"term[{k},{j}]")
+            else:
+                ub_kj = agg.term_ub.get((k, j), agg.commodities[k].m)
+                add("(9)", gp.quicksum(x[a] for a in ids) - ub_kj * y[j], GRB.LESS_EQUAL, 0,
+                    f"term[c{k},{j}]")
 
         # ------------------------------------------------------------ (10) services
         for s0 in inst.services:
@@ -544,12 +609,17 @@ class ILPModel:
         cst = cost(inst, lib, sched)
         rep = check(inst, lib, sched, switches=self.switches)
         yv, Bv, Cv = facility_vars(inst, sched)
-        chosen = set()
-        for ids in sched.x.values():
-            chosen.update(int(a) for a in ids)
         vals: Dict[gp.Var, float] = {}
-        for a_id, var in self.x.items():
-            vals[var] = 1.0 if a_id in chosen else 0.0
+        if self.agg is None:
+            chosen = set()
+            for ids in sched.x.values():
+                chosen.update(int(a) for a in ids)
+            for a_id, var in self.x.items():
+                vals[var] = 1.0 if a_id in chosen else 0.0
+        else:   # O1: X_a = number of bikes on arc a
+            flows, missing = self.agg.aggregate_x(sched.x)
+            for a_id, var in self.x.items():
+                vals[var] = float(flows.get(a_id, 0))
         for i, var in self.u.items():
             vals[var] = float(sched.u.get(i, 0))
         for j in inst.N:
@@ -576,6 +646,8 @@ class ILPModel:
             "start_violations": rep["n_violations"], "verified": None,
             "verified_obj": None, "verified_status": None,
         }
+        if self.agg is not None:
+            info["agg_missing_arcs"] = len(missing)
         if verify:
             ok, obj, status = self.verify_mip_start()
             info.update(verified=ok, verified_obj=obj, verified_status=status)
@@ -698,7 +770,16 @@ class ILPModel:
                                   and fi[0] <= ms["start_obj"] + 1e-6 * max(1.0, abs(ms["start_obj"])))
         stats["mip_start"] = ms
         if m.SolCount == 0:
-            stats.update(obj=None, bound=None, gap=None)
+            # O2 (C4): keep Gurobi's ObjBound when it exists without an incumbent (time limit or
+            # BestBdStop before the first incumbent); statistics only, ``None`` when unavailable
+            bound = None
+            try:
+                b = float(m.ObjBound)
+                if math.isfinite(b) and abs(b) < 1e99 and m.Status not in (GRB.INFEASIBLE, GRB.INF_OR_UNBD):
+                    bound = b
+            except (gp.GurobiError, AttributeError):
+                bound = None
+            stats.update(obj=None, bound=bound, gap=None)
             return None, stats
         obj = m.ObjVal
         stats["obj"] = obj
@@ -728,11 +809,15 @@ class ILPModel:
     def _size_stats(self) -> Dict[str, Any]:
         m = self.model
         m.update()
-        return {
+        out = {
             "n_vars": m.NumVars, "n_binaries": m.NumBinVars, "n_integers": m.NumIntVars,
             "n_rows": m.NumConstrs, "n_nonzeros": m.NumNZs,
             "rows_by_family": dict(self.n_rows), "n_arcs": len(self.lib),
         }
+        if self.agg is not None:
+            out["aggregate"] = self.agg.summary()
+            out["n_agg_arcs"] = len(self.agg)
+        return out
 
     # ------------------------------------------------------------ extraction
     def extract_schedule(self) -> Schedule:
@@ -743,10 +828,20 @@ class ILPModel:
         if m.SolCount == 0:
             raise RuntimeError("no solution available")
         xv = m.getAttr("X", self.x)
-        x: Dict[Any, List[int]] = {b.id: [] for b in inst.bikes}
-        for a in lib.arcs:
-            if xv[a.id] > 0.5:
-                x[a.k].append(a.id)
+        if self.agg is None:
+            x: Dict[Any, List[int]] = {b.id: [] for b in inst.bikes}
+            for a in lib.arcs:
+                if xv[a.id] > 0.5:
+                    x[a.k].append(a.id)
+        else:   # O1: path decomposition of the integer flow, one path per bike
+            # Gurobi accepts integer values within IntFeasTol (default 1e-5, absolute); a flow
+            # of 1.999998 is the integer 2, so the decomposition rounds within that tolerance
+            # (the per-bike branch rounds binaries at 0.5 in the same spirit)
+            try:
+                int_tol = float(m.Params.IntFeasTol)
+            except Exception:  # noqa: BLE001 - shared / foreign model objects
+                int_tol = 1e-5
+            x = self.agg.decompose(xv, tol=max(1e-6, 1.01 * int_tol))
         u = {i: int(round(v)) for i, v in m.getAttr("X", self.u).items()} if len(self.u) else {}
         c = ({key: int(round(v)) for key, v in m.getAttr("X", self.c).items() if round(v) != 0}
              if len(self.c) else {})
@@ -757,8 +852,10 @@ class ILPModel:
         B = {j: int(round(var.X)) for j, var in self.B.items()}
         C = {j: int(round(var.X)) for j, var in self.C.items()}
         n = {key: int(round(v)) for key, v in m.getAttr("X", self.n).items()}
-        return Schedule(x=x, u=u, c=c, h=h, z=z, y=y, B=B, C=C, n=n,
-                        meta={"solver": "gurobi", "colocated": self.switches["colocated"]})
+        meta: Dict[str, Any] = {"solver": "gurobi", "colocated": self.switches["colocated"]}
+        if self.agg is not None:
+            meta["aggregate"] = self.agg.mode
+        return Schedule(x=x, u=u, c=c, h=h, z=z, y=y, B=B, C=C, n=n, meta=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -774,7 +871,8 @@ def build_model(inst: Instance, arcs: ArcLibrary, *, no_transfers: Optional[bool
                 lexicographic: Optional[bool] = None, battery_swap_v1_bounds: Optional[bool] = None,
                 mip_start: Optional[Schedule] = None, threads: int = 4, time_limit: float = 600.0,
                 output: bool = False, params: Optional[Dict[str, Any]] = None,
-                verify_start: bool = True) -> ILPModel:
+                verify_start: bool = True, aggregate: bool = False,
+                aggregate_mode: str = "auto") -> ILPModel:
     """Build the E2 ILP (5)-(22), (26)-(33) and return an :class:`ILPModel`.
 
     Switch arguments left at ``None`` take ``inst.options[name]`` (``no_transfers``,
@@ -785,6 +883,15 @@ def build_model(inst: Instance, arcs: ArcLibrary, *, no_transfers: Optional[bool
     is loaded with :meth:`ILPModel.set_mip_start` (verified by a fixed solve when
     ``verify_start``).  Gurobi parameters: ``OutputFlag = output``, ``Threads``,
     ``TimeLimit`` and any extra ``params`` (``{'MIPGap': 0.01}``).
+
+    ``aggregate=True`` (plan item O1) builds the equivalent aggregated integer-flow
+    model on the union ``(v, t, q)`` network (``ebike_swap_sim.aggregate``): bikes with
+    the same start state share one flow with supply ``m_c``, rows (5), (6), (9), (12),
+    (22) and the objective (29)-(30) use the aggregated arcs, and the incumbent is
+    decomposed into per-bike paths so ``evaluate.check`` / ``cost`` certify it
+    unchanged.  ``aggregate_mode``: ``'auto'`` (default), ``'single'`` or ``'groups'``
+    (see :class:`~ebike_swap_sim.aggregate.AggregatedNetwork`).  The default
+    ``aggregate=False`` is the original per-bike model, built exactly as before.
     """
     fixed = _resolve(fixed_facilities, inst, "fixed_facilities")
     fixed = True if fixed is None else bool(fixed)
@@ -798,10 +905,70 @@ def build_model(inst: Instance, arcs: ArcLibrary, *, no_transfers: Optional[bool
         lexicographic=bool(_resolve(lexicographic, inst, "lexicographic")),
         battery_swap_v1_bounds=bool(_resolve(battery_swap_v1_bounds, inst, "battery_swap_v1_bounds")),
         threads=threads, time_limit=time_limit, output=output, params=params,
+        **({"aggregate": True, "aggregate_mode": aggregate_mode} if aggregate else {}),
     )
+    _apply_forced_transfers(mdl)
     if mip_start is not None:
         mdl.set_mip_start(mip_start, verify=verify_start)
     return mdl
+
+
+def _apply_forced_transfers(mdl: "ILPModel") -> int:
+    """Fix the data-forced transfers ``inst.options['forced_transfers']`` (plan item M9,
+    battery lock-out of ``generator.add_battery_lockout``) as variable bounds of E2 (10):
+    ``h_e >= 1`` and, for a given level ``q``, ``z_eq >= 1``.  No row of E2 changes; these
+    are data fixings like ``y_j = 1``.  Under ``no_transfers`` (``h_e = 0``) the lock-out is
+    removed instead (documented in ``generator.add_battery_lockout``) and the count of
+    skipped services is recorded.  The number of fixed services is stored in
+    ``mdl.switches['forced_transfers']`` (absent when the instance has none)."""
+    forced = mdl.inst.options.get("forced_transfers") or []
+    if not forced:
+        return 0
+    if mdl.switches["no_transfers"]:
+        mdl.switches["forced_transfers"] = 0
+        mdl.switches["forced_transfers_skipped"] = len(forced)
+        return 0
+    n = 0
+    for rec in forced:
+        e = rec["service"]
+        if e not in mdl.h:
+            continue
+        mdl.h[e].LB = 1.0
+        if rec.get("level") is not None:
+            mdl.z[e, int(rec["level"])].LB = 1.0
+        n += 1
+    mdl.model.update()
+    mdl.switches["forced_transfers"] = n
+    return n
+
+
+def build_submodel(inst: Instance, arcs: ArcLibrary, model: gp.Model, *,
+                   facility_vars: Tuple[Dict[Any, gp.Var], Dict[Any, gp.Var], Dict[Any, gp.Var]],
+                   prefix: str = "", aggregate: bool = True, aggregate_mode: str = "auto",
+                   no_transfers: bool = False, colocated: bool = False,
+                   battery_swap_v1_bounds: bool = False, set_objective: bool = False,
+                   names: Optional[bool] = None, keep_rows: bool = False) -> ILPModel:
+    """Add one scenario copy of E2 (5)-(6), (9)-(22) to a caller-owned ``model`` with
+    shared facility variables ``(y, B, C)`` (plan item O1, for the integrated stochastic
+    siting model ``bilevel.integrated_stochastic_ilp``; E2 (26)-(32) available as
+    ``sub.objective`` / ``sub.components``, ``sub.sum_u`` for (33)).
+
+    With ``aggregate=True`` (default here) the scenario uses the aggregated integer
+    flow of :class:`~ebike_swap_sim.aggregate.AggregatedNetwork`, which divides the
+    number of ``x`` variables by roughly the fleet size; ``sub.extract_schedule()``
+    still returns a per-bike :class:`Schedule` and ``sub.set_mip_start(sched)`` takes
+    one.  The caller owns (7)-(8), (33) and the objective, exactly as with
+    ``ILPModel(..., model=m, facility_vars=...)``; this is that call with the
+    integrated-model switch values (``fixed_facilities=False``, no budget / zeta /
+    lexicographic).  Threads / TimeLimit are the caller's model parameters.  ``keep_rows``
+    (plan item O2) stores the row objects in ``sub.rows`` (see :class:`ILPModel`)."""
+    return ILPModel(
+        inst, arcs, no_transfers=no_transfers, colocated=colocated, fixed_facilities=False,
+        budget=None, zeta=None, lexicographic=False, battery_swap_v1_bounds=battery_swap_v1_bounds,
+        threads=int(model.Params.Threads), time_limit=float(model.Params.TimeLimit), output=False,
+        params=None, names=names, model=model, prefix=prefix, facility_vars=facility_vars,
+        set_objective=set_objective, aggregate=aggregate, aggregate_mode=aggregate_mode,
+        keep_rows=keep_rows)
 
 
 def solve(inst: Instance, arcs: ArcLibrary, *, mip_start: Optional[Schedule] = None,

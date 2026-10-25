@@ -54,3 +54,88 @@ paper/brief.pdf
 paper/*.bak
 ebike_swap_sim/outputs/e9_bilevel_smoke/
 ebike_swap_sim/outputs/*_smoke/
+
+# AWS deployment (deploy/aws/README_AWS.md): the filled-in connection file (and per-instance
+# copies), any Gurobi licence file, any ssh key, downloaded results and the lane status / logs
+# written on the instance
+deploy/aws/aws_env.sh
+deploy/aws/aws_env.*.sh
+!deploy/aws/aws_env.example.sh
+*.lic
+*.pem
+cloud_results/
+ebike_swap_sim/outputs/cloud_lanes/
+
+# ---------------------------------------------------------------------------
+# Rounds 5-7 (added for the round 5-7 push)
+# ---------------------------------------------------------------------------
+
+# Paper drafts (the ITSC / IJCAI / journal manuscripts are unpublished) and their Overleaf bundles
+manuscript/
+paper_ijcai/
+paper_itsc/
+paper_itsc_v1_backup/
+*_overleaf.zip
+
+# Copyrighted proposal deck converted to markdown; the reading/ PDFs are already covered by *.pdf
+# (reading/README.md, our own annotated reading list, is kept)
+Ebike Battery Swap.md
+
+# Raw agent journal of the DOT site collection (the cleaned table is data/raw/dot_candidate_sites.csv)
+notes/dot_sites_raw_journal.json
+
+# Archives anywhere (snapshot tarballs, probe upload bundles, saved RL model zips)
+*.zip
+*.tgz
+*.tar.gz
+
+# Rounds 5-7 experiment outputs: ignore everything by default, then re-include only the
+# small, useful result files: write-ups (*.md), results*.csv and records*.jsonl (each <= 3 MB,
+# checked at commit time; nothing in this set exceeds 2.6 MB), and lane plans (lanes*.txt/json).
+# Per-solve caches, schedules, cuts, logs, pid/status files, model checkpoints, figure scripts
+# and figure PNGs of rounds 5-6 stay local.
+ebike_swap_sim/outputs/r5_*/**
+ebike_swap_sim/outputs/r6_*/**
+ebike_swap_sim/outputs/r7_*/**
+ebike_swap_sim/outputs/a7_rl/**
+ebike_swap_sim/outputs/cloud_lanes_siting/**
+ebike_swap_sim/outputs/cloud_lanes_siting_prod/**
+!ebike_swap_sim/outputs/r5_*/**/
+!ebike_swap_sim/outputs/r6_*/**/
+!ebike_swap_sim/outputs/r7_*/**/
+!ebike_swap_sim/outputs/cloud_lanes_siting/**/
+!ebike_swap_sim/outputs/cloud_lanes_siting_prod/**/
+!ebike_swap_sim/outputs/r5_*/**/*.md
+!ebike_swap_sim/outputs/r6_*/**/*.md
+!ebike_swap_sim/outputs/r7_*/**/*.md
+!ebike_swap_sim/outputs/r5_*/**/results*.csv
+!ebike_swap_sim/outputs/r6_*/**/results*.csv
+!ebike_swap_sim/outputs/r5_*/**/records*.jsonl
+!ebike_swap_sim/outputs/r6_*/**/records*.jsonl
+!ebike_swap_sim/outputs/r7_*/**/records*.jsonl
+!ebike_swap_sim/outputs/cloud_lanes_siting/**/lanes*.txt
+!ebike_swap_sim/outputs/cloud_lanes_siting/**/lanes*.json
+!ebike_swap_sim/outputs/cloud_lanes_siting_prod/**/lanes*.txt
+!ebike_swap_sim/outputs/cloud_lanes_siting_prod/**/lanes*.json
+
+# Final siting run (outputs/r7_prod_final): keep the write-ups, the two map figures and their
+# script, the per-scenario records and cost files, the candidate table and the map data;
+# not cuts.jsonl, not cache/, not the diagnostic logs, not the copy of the lane folder
+!ebike_swap_sim/outputs/r7_prod_final/figs/*.png
+!ebike_swap_sim/outputs/r7_prod_final/figs/final_map.py
+!ebike_swap_sim/outputs/r7_prod_final/r7_siting/cost.jsonl
+!ebike_swap_sim/outputs/r7_prod_final/r7_siting/candidates.csv
+!ebike_swap_sim/outputs/r7_prod_final/r7_siting/map_data.csv
+
+# Re-exclude, after the whitelist above: caches, cuts, smoke / snapshot / probe-bundle folders,
+# the duplicate lane folder inside r7_prod_final and its diagnostic run
+ebike_swap_sim/outputs/**/cache/
+ebike_swap_sim/outputs/**/cuts*.jsonl
+ebike_swap_sim/outputs/r6_penalty_smoke_fix/
+ebike_swap_sim/outputs/r7_prod_snapshots/
+ebike_swap_sim/outputs/r7_siting_probe/upload/
+ebike_swap_sim/outputs/r7_prod_final/cloud_lanes_siting_prod/
+ebike_swap_sim/outputs/r7_prod_final/r7_diag/
+
+# Laptop smoke runs of the round-7 probe (the server probe records are kept)
+ebike_swap_sim/outputs/r7_siting_probe/laptop_smoke*/
