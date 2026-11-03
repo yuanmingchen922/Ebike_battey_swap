@@ -20,6 +20,7 @@ Missing dictionary entries are zeros.
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -929,12 +930,15 @@ def metric_pack(inst: Instance, lib: ArcLibrary, sched: Schedule,
     # ------------------------------------------------------ unserved-order index (4)
     unserved = [o.id for o in inst.orders if int(sched.u.get(o.id, 0))]
     need: Dict[Tuple[Any, Any, int], Dict[Any, int]] = defaultdict(dict)
-    for i in unserved:
-        for a in lib.delivery_arcs(i):
-            key = (a.k, a.src[0], a.src[1])
-            prev = need[key].get(i)
-            if prev is None or a.src[2] < prev:
-                need[key][i] = int(a.src[2])
+    if hasattr(lib, "delivery_need"):          # R8 union library: the same index without materialising arcs
+        need.update(lib.delivery_need(unserved))
+    else:
+        for i in unserved:
+            for a in lib.delivery_arcs(i):
+                key = (a.k, a.src[0], a.src[1])
+                prev = need[key].get(i)
+                if prev is None or a.src[2] < prev:
+                    need[key][i] = int(a.src[2])
     # ---------------------------------------------------------------- per-bike pass
     station_time: List[float] = []
     wait_min: List[float] = []
@@ -1090,7 +1094,116 @@ def metric_pack(inst: Instance, lib: ArcLibrary, sched: Schedule,
         "bike_end_levels_missing": adj["bike_levels"],
         "bike_end_levels": q_end,
         "C_end_adjust": adj["C_end_adjust"],
+        # R8: per-site statistics of the map / companion table (``site_metrics``)
+        "per_site": site_metrics(inst, lib, sched, n=n),
     }
+
+
+def _blocks(a: Any, b: Any) -> int:
+    """Grid distance of two nodes in blocks (tuples: L1 distance; scalars: absolute difference)."""
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return sum(abs(int(x) - int(y)) for x, y in zip(a, b))
+    try:
+        return abs(int(a) - int(b))
+    except (TypeError, ValueError):
+        return 0
+
+
+#: Per-site statistics of :func:`site_metrics` (one row per open swap- or charge-capable site).
+SITE_METRIC_KEYS = ("swaps", "riders_distinct", "wait_min_mean", "orders_1km_served", "orders_1km_total",
+                    "charger_busy_share", "idle_share", "kwh_bought", "stockout_slots", "charge_steps", "rider_depots")
+
+
+def site_metrics(inst: Instance, lib: ArcLibrary, sched: Schedule, radius_blocks: int = 7,
+                 slot_group: int = 3, n: Optional[Dict[Tuple[Any, int, int], int]] = None) -> Dict[Any, Dict[str, Any]]:
+    """R8 fifteen-site study (``notes/siting15_design.md`` section 6, the per-site statistics the
+    run logs for the map and the companion table): one dict per OPEN swap- or charge-capable facility ``j``
+    (a charge-only hub has ``swaps = 0``; R8 fix, so the kWh rows sum to ``kwh_purchased`` for every layout)
+    computed from the schedule and the library only (no policy flags, so ILP and rule schedules
+    are measured by the same code):
+
+    * ``swaps`` -- swap arcs at ``j`` (12); ``riders_distinct`` -- bikes that swapped there;
+      ``rider_depots`` -- ``{depot node: riders}`` of those bikes (``Bike.v0``);
+    * ``wait_min_mean`` -- mean wait slots at the site immediately before a swap, in minutes;
+    * ``orders_1km_served`` / ``orders_1km_total`` -- served / all orders whose restaurant
+      ``o_i`` lies within ``radius_blocks`` grid blocks of the site (7 blocks of 150 m = about
+      1 km); an order counts at every site within reach;
+    * ``charger_busy_share`` -- share of ``slot_group``-slot periods (3 x 5 min = 15 min) in
+      which some charging step ``c_jqt > 0`` runs at ``j`` (0..1; 0 at swap-only sites);
+      ``idle_share`` -- share of those periods with no swap in progress and no charging;
+    * ``kwh_bought`` -- ``charge_steps x eps / eta`` (28); ``charge_steps`` -- ``sum_qt c_jqt``;
+    * ``stockout_slots`` -- slots ``t < H`` with no full battery on the shelf (``n_jLt = 0``).
+
+    ``n`` = the inventory trajectory (reconstructed with (13) when absent)."""
+    H, L = inst.H, inst.L
+    disc = inst.disc
+    y, B, C = facility_vars(inst, sched)
+    if n is None:
+        n = sched.n
+    if n is None:
+        n = reconstruct_inventory(inst, lib, {k: sched.arc_ids(k) for k in sched.x}, sched.c, sched.z, B)
+    # R8 fix (reviewer): open charge-only hubs (role C) are rows too (swaps 0, riders 0), so the
+    # kWh per site sums to ``kwh_purchased`` for every layout, not only hub-free ones
+    sites = [f for f in inst.facilities if (f.swap or f.charge) and y.get(f.id, 0)]
+    if not sites:
+        return {}
+    g = max(1, int(slot_group))
+    n_periods = int(math.ceil(H / g))
+    out: Dict[Any, Dict[str, Any]] = {}
+    busy_swap: Dict[Any, List[int]] = {f.id: [0] * H for f in sites}
+    busy_charge: Dict[Any, List[int]] = {f.id: [0] * H for f in sites}
+    waits: Dict[Any, List[int]] = {f.id: [] for f in sites}
+    riders: Dict[Any, set] = {f.id: set() for f in sites}
+    swaps: Dict[Any, int] = {f.id: 0 for f in sites}
+    depot_of = {b.id: b.v0 for b in inst.bikes}
+    for b in inst.bikes:
+        run_wait = 0
+        for a in sched.path(b.id, lib):
+            if a.kind == "wait":
+                run_wait += 1
+                continue
+            if a.kind == "swap" and a.fac in swaps:
+                swaps[a.fac] += 1
+                riders[a.fac].add(b.id)
+                waits[a.fac].append(run_wait)
+                for tau in range(max(a.l, 0), min(a.u, H)):
+                    busy_swap[a.fac][tau] += 1
+            run_wait = 0
+    steps: Dict[Any, int] = {f.id: 0 for f in sites}
+    for (j, q, t), val in sched.c.items():
+        if j in steps and val and 0 <= int(q) < L and 0 <= int(t) < H:
+            steps[j] += int(val)
+            busy_charge[j][int(t)] += int(val)
+    near_total: Dict[Any, int] = {f.id: 0 for f in sites}
+    near_served: Dict[Any, int] = {f.id: 0 for f in sites}
+    for o in inst.orders:
+        served = not int(sched.u.get(o.id, 0))
+        for f in sites:
+            if _blocks(f.node, o.o) <= int(radius_blocks):
+                near_total[f.id] += 1
+                near_served[f.id] += int(served)
+    for f in sites:
+        j = f.id
+        per_busy_c = sum(1 for p in range(n_periods) if any(busy_charge[j][t] > 0 for t in range(p * g, min(H, (p + 1) * g))))
+        per_idle = sum(1 for p in range(n_periods)
+                       if not any(busy_charge[j][t] > 0 or busy_swap[j][t] > 0 for t in range(p * g, min(H, (p + 1) * g))))
+        w = waits[j]
+        deps: Dict[str, int] = {}
+        for k in riders[j]:
+            d = depot_of.get(k)
+            key = str(list(d) if isinstance(d, tuple) else d)
+            deps[key] = deps.get(key, 0) + 1
+        out[j] = {
+            "swaps": int(swaps[j]), "riders_distinct": len(riders[j]),
+            "wait_min_mean": (sum(w) / len(w) * disc.Delta_h * 60.0) if w else 0.0,
+            "orders_1km_served": int(near_served[j]), "orders_1km_total": int(near_total[j]),
+            "charger_busy_share": (per_busy_c / n_periods) if (f.charge and n_periods) else 0.0,
+            "idle_share": (per_idle / n_periods) if n_periods else 1.0,
+            "kwh_bought": steps[j] * disc.kwh_per_step, "charge_steps": int(steps[j]),
+            "stockout_slots": sum(1 for t in range(H) if int(n.get((j, L, t), 0)) == 0),
+            "rider_depots": deps,
+        }
+    return out
 
 
 #: Scalar entries of :func:`metric_pack` copied into flat experiment records

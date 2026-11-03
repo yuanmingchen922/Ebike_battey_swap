@@ -73,8 +73,11 @@ ebike_swap_sim/outputs/cloud_lanes/
 # Paper drafts (the ITSC / IJCAI / journal manuscripts are unpublished) and their Overleaf bundles
 manuscript/
 paper_ijcai/
-paper_itsc/
-paper_itsc_v1_backup/
+paper_itsc/*
+!paper_itsc/figs/
+paper_itsc/figs/*
+!paper_itsc/figs/src/
+paper_itsc_v*_backup/
 *_overleaf.zip
 
 # Copyrighted proposal deck converted to markdown; the reading/ PDFs are already covered by *.pdf
@@ -139,3 +142,16 @@ ebike_swap_sim/outputs/r7_prod_final/r7_diag/
 
 # Laptop smoke runs of the round-7 probe (the server probe records are kept)
 ebike_swap_sim/outputs/r7_siting_probe/laptop_smoke*/
+# ---------------------------------------------------------------------------
+# Round 8 (added for the round 8 push)
+# ---------------------------------------------------------------------------
+# Old Overleaf bundles with a suffix (the unpublished paper)
+*.zip.old_*
+# Fifteen-site study: per-cell caches and the server upload bundle stay local; the small result
+# files (RESULTS.md, summaries, layout.json, site_stats.csv, candidates, dry run, exact check,
+# cost.jsonl, records.jsonl) are kept
+ebike_swap_sim/outputs/r8_*/cache/
+ebike_swap_sim/outputs/r8_upload/
+# Benchmark files the union-arc tests rewrite on every run, and the one-off laptop probe log
+ebike_swap_sim/outputs/union_library/
+ebike_swap_sim/outputs/r8_k15_probe/

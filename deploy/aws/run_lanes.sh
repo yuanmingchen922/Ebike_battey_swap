@@ -109,12 +109,27 @@ deps_done() {
   for d in "${deps[@]}"; do lane_done "$d" || return 1; done
   return 0
 }
-# deps_failed INDEX -> 0 when a lane in "after" is in the failed state (so this lane is blocked)
+# lane_index NAME -> prints the index of lane NAME in the parsed file (rc 1 when it is not there)
+lane_index() {
+  local i
+  for i in "${!L_NAME[@]}"; do [ "${L_NAME[$i]}" = "$1" ] && { echo "$i"; return 0; }; done
+  return 1
+}
+# deps_failed INDEX -> 0 when a lane in "after" is in the failed state, or is itself blocked behind a
+# failed lane (transitive). Fix of 2026-10-30: with only direct dependencies, a lane two steps behind a
+# failed lane (k15_report after k15_final after the failed k15_search) stayed "pending" for ever, so the
+# dispatcher never exited and the idle watchdog never stopped the instance.
 deps_failed() {
-  local after="${L_AFTER[$1]}" d deps
+  local after="${L_AFTER[$1]}" depth="${2:-0}" d j deps
   [ "$after" = "-" ] && return 1
+  [ "$depth" -le 64 ] || return 1
   IFS=',' read -ra deps <<<"$after"
-  for d in "${deps[@]}"; do lane_failed "$d" && return 0; done
+  for d in "${deps[@]}"; do
+    lane_failed "$d" && return 0
+    lane_done "$d" && continue
+    j="$(lane_index "$d")" || continue
+    deps_failed "$j" $((depth + 1)) && return 0
+  done
   return 1
 }
 

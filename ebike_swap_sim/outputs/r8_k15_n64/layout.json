@@ -1,0 +1,129 @@
+{
+ "schema": "map15.layout/1",
+ "label": "Best found, 15 sites",
+ "demo": false,
+ "run": "r8_k15_n64",
+ "family": "manhattan15",
+ "policy": "baseline",
+ "variant": "r2",
+ "n_bikes": 64,
+ "n_orders": 320,
+ "n_scenarios": 12,
+ "V": 11210.50779232804,
+ "V_ci95": [
+  10338.074681337106,
+  12082.940903318975
+ ],
+ "served_share": 0.7287512400793651,
+ "investment_usd": 782250.0,
+ "candidates_csv": "/home/ubuntu/battery_swap/ebike_swap_sim/outputs/r8_k15_n64/candidates.csv",
+ "sites": [
+  {
+   "id": "D05",
+   "role": "SC",
+   "B": 4,
+   "C": 2
+  },
+  {
+   "id": "D07",
+   "role": "SC",
+   "B": 4,
+   "C": 2
+  },
+  {
+   "id": "D11",
+   "role": "SC",
+   "B": 4,
+   "C": 2
+  },
+  {
+   "id": "D12",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D16",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D19",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D30",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D33",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D38",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D40",
+   "role": "SC",
+   "B": 2,
+   "C": 2
+  },
+  {
+   "id": "D46",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D49",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D54",
+   "role": "SC",
+   "B": 2,
+   "C": 2
+  },
+  {
+   "id": "D55",
+   "role": "SC",
+   "B": 3,
+   "C": 2
+  },
+  {
+   "id": "D58",
+   "role": "SC",
+   "B": 2,
+   "C": 2
+  }
+ ],
+ "V_out": 11464.674014550264,
+ "V_out_ci95": [
+  10923.700502957981,
+  12005.647526142548
+ ],
+ "search": {
+  "best_restart": "empty",
+  "S_search": [
+   0,
+   2,
+   4,
+   6,
+   8,
+   10
+  ],
+  "V_search": 11156.01808994709
+ }
+}

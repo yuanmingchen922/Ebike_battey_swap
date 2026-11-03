@@ -3,16 +3,26 @@
 New York City is moving delivery e-bike charging out of homes. It must decide where public battery-swapping and
 charging stations should go. Delivery platforms do not share trip data. So this repository builds a simulator of
 e-bike battery swapping from **public data only** and uses it to choose station sites, roles and sizes in
-Manhattan south of 110th Street. Every answer comes with a **lower bound**, so we know how far it can be from the
-best possible layout.
+Manhattan south of 110th Street. Two studies use it. For one to three stations and a small fleet, every answer
+comes with a **lower bound**, so we know how far it can be from the best possible layout. For fifteen stations and
+a city-scale fleet, riders follow a dispatch rule and the answer is the **best layout found**, compared with common
+siting rules.
 
-A paper on this work is in preparation.
+A paper reporting both studies is in preparation.
 
-**Short answer.** One station: put it in the corridor between 13th and 54th Street. DOT's proposed Site 34
-(2nd Ave & E 13th St) is best. Two stations cut the daily cost by a third. Swap and charge at the same site.
-Rule-based layouts and the 2024 DOT pilot pair cost 92-141 USD per day more.
+**Short answer.** *One to three stations, 8 riders:* one station goes in the corridor between 13th and 54th Street;
+DOT's proposed Site 34 (2nd Ave & E 13th St) is best. Two stations cut the daily cost by a third. Swap and charge at
+the same site. Rule-based layouts and the 2024 DOT pilot pair cost 92-141 USD per day more.
+*Fifteen stations, 64 riders:* put one within 1 km of each of the six bridge and tunnel entry points, five in the
+restaurant-dense East Village and Midtown, and four north of 59th Street. Layouts from common siting rules cost
+1,527-3,738 USD per day more.
 
-![Where the stations go](docs/figs/fig_map.png)
+![The fifteen sites of the best layout found](docs/figs/fig_map15.png)
+
+*The fifteen sites, numbered south to north; dark badges: within 1 km of a bridge or tunnel entry; shading:
+restaurant density (NYC DOHMH). Streets, bridges, tunnels and the New Jersey shore
+© [OpenStreetMap contributors](https://www.openstreetmap.org/copyright) (ODbL); land and parks: the city's 2010
+neighborhood tabulation areas (GeoDa Center).*
 
 ## 1. Method
 
@@ -29,6 +39,12 @@ A planner has a budget in units of 52,150 USD. One unit buys one swap-and-charge
 A layout is scored by its expected **daily cost**: set-up per day plus the operating cost of the 16:00-20:00
 dinner peak, averaged over 12 demand evenings.
 
+The first study prices budgets of one to three units with 8 riders and about 40 orders per evening. The second
+asks where **15 sites** should go at a city-scale fleet: 64 riders start at the four East River bridges and the
+Holland and Lincoln Tunnels with a quarter to half a battery, and 320 orders arrive per evening on average. The
+planner opens exactly 15 SC sites of one unit each (782,250 USD), then may move spares and chargers between them at
+the same cost. Each site has its own 1.4 kW power connection. Fifteen is a policy target, not a model result.
+
 ### 1.2 An open-data modular simulator
 
 The simulator has six modules. Each can be replaced with better data or a better model without touching the rest.
@@ -36,9 +52,9 @@ The simulator has six modules. Each can be replaced with better data or a better
 | Module | What it does | Main code |
 |---|---|---|
 | Demand generation | Orders from restaurant inspections, census profiles and a public order sample | `generator.py`, `data_nyc.py`, `acs_weights.py` |
-| Rider behavior | Coordinated plan (integer program); rule-based and own-choice riders as alternatives | `arcs.py`, `ilp.py`, `aggregate.py`, `baseline.py`, `rolling.py` |
-| Station placement | Candidate sites, role and size menu, layout search and bounds | `sites_nyc.py`, `bilevel.py`, `benders.py` |
-| Battery stock and charging | Station stock by charge level, chargers, site and feeder power limits | `ilp.py`, `evaluate.py` |
+| Rider behavior | Coordinated plan (integer program) for one to three sites; dispatch rule for fifteen; own-choice riders as an alternative | `arcs.py`, `ilp.py`, `aggregate.py`, `baseline.py`, `rolling.py` |
+| Station placement | Candidate sites, role and size menu, layout search with bounds (one to three sites) or without (fifteen) | `sites_nyc.py`, `bilevel.py`, `benders.py` |
+| Battery stock and charging | Station stock by charge level, chargers, site and feeder power limits | `ilp.py`, `baseline.py`, `evaluate.py` |
 | Swap queue and service | Swap positions and swap time per site | `ilp.py`, `baseline.py` |
 | Policy limits and prices | Costs, time-of-use electricity, penalties | `costs.py`, `or_instance.py` |
 
@@ -70,7 +86,8 @@ n_{j,q,t+1}=n_{jqt}-c_{jqt}+c_{j,q-1,t}+s_{jqt}-\mathbf 1[q=L]\,S_{jt}-D_{jqt}+A
 * **transfers**: a timetabled service may move up to 6 batteries between two open sites within 2 km.
 
 The cost is electricity + riding + transfers + unserved orders + response time and lateness. The follower minimises
-the planner's own operating cost, so the bi-level model equals a two-stage stochastic integer program.
+the planner's own operating cost, so the bi-level model equals a two-stage stochastic integer program. The
+fifteen-site study replaces this follower with a dispatch rule (section 1.5).
 
 **Exact rider aggregation.** Riders with the same start node and the same arc set form a class. If every class is
 closed, the per-rider binaries become integer flows on one union network with the same optimum (proved in the
@@ -112,25 +129,50 @@ under both. Open-sites integer-program bounds are used only in open-sites statem
 Comparisons between layouts are paired on the same scenarios, with stratified 95 % intervals (6 df over the 12
 in-sample evenings; 3 df for the held-out weekday check).
 
+### 1.5 Fifteen sites: search without a bound
+
+The integer program does not scale to 64 riders and 15 open sites: such an evening has 266-680 million rider arcs,
+and already at 8 riders and 80 orders a 15-site evening kept a 94 % gap after 240 s. So the fifteen-site study
+changes three things.
+
+* **Dispatch-rule riders** (`baseline.run_baseline`, variant r2). Each order goes to the nearest rider who can serve
+  it. A rider swaps at the nearest open site with a charged battery when its battery falls to a quarter, or earlier
+  if it could not take the next order and still reach a site. Each site charges as many batteries as its swaps of
+  the last hour suggest. Every schedule is checked by `evaluate.check` and priced with the same cost function.
+* **One shared arc network** (`arcs.UnionArcLibrary`): the arcs of all riders are stored once, with one reachability
+  mask per start place and charge, so memory does not grow with the fleet (about 2 GB per worker for an evening).
+* **Search** (`bilevel.greedy_local_search` with `force_k=15`). Forward selection from four starts (the best pair
+  of Finding 2, the best two sites of the coverage and of the spread rule, no site); at each step a distance screen
+  (`bilevel.ProxyScreen`: order penalty times grid distance to the nearest open site) ranks the candidates and the
+  three best are priced. Then site swaps, and a size polish that moves spares at the same investment. The search
+  prices 6 of the 12 evenings.
+
+There are $`\binom{59}{15}\approx 4.0\times 10^{13}`$ ways to pick 15 of 59 sites, and no lower bound was computed at
+this size. So the study reports the best layout found, re-priced on 12 + 12 held-out evenings, the cost against the
+number of sites, paired regrets against rule layouts, and an exact check of the dispatch rule at 16 riders.
+
 ## 2. Code logic
 
 ```mermaid
 flowchart LR
     A["Open data<br/>DOHMH, ACS, FoodHub,<br/>DOT sites, Citi Bike GBFS"] --> B["Instance generator<br/>sites_nyc / generator / data_nyc"]
-    B --> C["Arc library<br/>arcs.py, aggregate.py"]
+    B --> C["Arc library<br/>arcs.py (per rider or shared union), aggregate.py"]
     C --> D["Operations ILP<br/>ilp.py"]
     C --> E["Rule policies<br/>baseline.py, rolling.py"]
     D --> F["Layout evaluator + cache<br/>bilevel.LowerLevelEvaluator"]
     E --> F
     F --> G["Benders master and bounds<br/>benders.py"]
-    G --> H["Experiment drivers<br/>r7_siting.py, r7_search.py"]
+    F --> K["Exactly-k search<br/>bilevel.greedy_local_search, ProxyScreen"]
+    G --> H["Experiment drivers<br/>r7_siting.py, r7_search.py, r8_k15.py"]
+    K --> H
     H --> I["AWS lanes<br/>deploy/aws/run_lanes.sh"]
     I --> J["records.jsonl, RESULTS.md"]
 ```
 
 The arc library is shared by the ILP and the rule policies, so both are priced on the same moves. Every schedule
 is re-checked by `evaluate.check`. The evaluator caches each (layout, scenario) solve. The master turns LP duals
-into safe cuts. Every driver stage appends to `records.jsonl` and resumes from it.
+into safe cuts. Every driver stage appends to `records.jsonl` and resumes from it. In the fifteen-site study
+`r8_k15.py` prices the evenings in a pool of worker processes, each building its own union arc library.
 
 ### Main modules
 
@@ -141,20 +183,21 @@ All paths are under `ebike_swap_sim/`.
 | `ebike_swap_sim/or_instance.py` | Data model: discretisation, riders, orders, facilities, transfer services |
 | `ebike_swap_sim/generator.py` | Synthetic and round-5 instance families |
 | `ebike_swap_sim/data_nyc.py`, `acs_weights.py` | NYC restaurants, census zone weights, order destinations |
-| `ebike_swap_sim/sites_nyc.py` | Candidate sites (`manhattan_dot` family), size menu, layout to instance |
-| `ebike_swap_sim/arcs.py` | Time-expanded arc library and pruning rules |
-| `ebike_swap_sim/aggregate.py` | Exact rider aggregation and path decomposition |
+| `ebike_swap_sim/sites_nyc.py` | Candidate sites (`manhattan_dot` and `manhattan15` families), size menu, layout to instance |
+| `ebike_swap_sim/arcs.py` | Time-expanded arc library and pruning rules; one union library for all riders (a reachability mask per rider class) |
+| `ebike_swap_sim/aggregate.py` | Exact rider aggregation and path decomposition (also on the union library) |
 | `ebike_swap_sim/ilp.py` | Gurobi operations model, MIP starts, solution extraction |
-| `ebike_swap_sim/evaluate.py` | Cost function and constraint checker for any schedule |
+| `ebike_swap_sim/evaluate.py` | Cost function, constraint checker and per-site metrics for any schedule |
 | `ebike_swap_sim/baseline.py` | Event-driven rule policy (nearest rider, threshold swaps) |
 | `ebike_swap_sim/rolling.py` | Rolling-horizon wrapper (online re-planning) |
-| `ebike_swap_sim/bilevel.py` | `LowerLevelEvaluator`, search heuristics, rule baselines |
+| `ebike_swap_sim/bilevel.py` | `LowerLevelEvaluator`, search heuristics (with an exactly-k mode and a distance screen), rule baselines |
 | `ebike_swap_sim/benders.py` | Scenario LPs, safe cuts, cut pool, master, subset bounds |
 | `ebike_swap_sim/costs.py` | Cost calibration in USD |
 | `experiments/r7_siting.py` | Siting driver: setup, feas, rootlp, m1, comparison, restricted, oos, analyse |
 | `experiments/r7_search.py` | Search driver: pairs, m3, roles, oos, noradius, price-list, ub-check, report |
 | `experiments/r7_gate.py`, `r7_cost.py` | Pre-run gate check; compute-cost summary of `cost.jsonl` |
-| `tests/` | About 480 pytest checks |
+| `experiments/r8_k15.py` | Fifteen-site driver: instances, dryrun, validate, search, final, report |
+| `tests/` | 535 pytest checks |
 
 ### Install
 
@@ -177,13 +220,15 @@ cd ebike_swap_sim
 python3 -m pytest                                   # pytest.ini sets the path
 PYTHONPATH=. python3 experiments/e1_toy.py          # toy example, optimum 12.5
 PYTHONPATH=. python3 experiments/r7_siting.py --smoke --stage all   # toy siting run -> outputs/r7_siting_smoke/
+PYTHONPATH=. python3 experiments/r8_k15.py --smoke --stage all      # toy fifteen-site run (4 candidates, k = 2), seconds
 PYTHONPATH=. python3 experiments/r7_siting.py --stage setup --dry-run --lp-workers 1 --price-workers 1   # sizes of the real instance, no solve (several minutes)
 ```
 
 ### The production siting run
 
-The production run uses the `manhattan_dot` family: 59 candidates, 12 scenarios plus 12 held-out, 8 riders,
-14-block approach radius. It ran on one AWS r7i.4xlarge in 48.1 instance hours (50.87 USD).
+The production run of the one-to-three-site study uses the `manhattan_dot` family: 59 candidates, 12 scenarios
+plus 12 held-out, 8 riders, 14-block approach radius. It ran on one AWS r7i.4xlarge in 48.1 instance hours
+(50.87 USD).
 
 1. `r7_siting.py --stage feas` screens which sites can work alone.
 2. `r7_siting.py --stage rootlp` solves the root LP per scenario.
@@ -215,9 +260,46 @@ deploy/aws/sync_down.sh               # results back
 Copy `deploy/aws/aws_env.example.sh` to `aws_env.sh` first (git-ignored). Final report:
 `ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md`.
 
+### The fifteen-site run
+
+The fifteen-site study uses the `manhattan15` family (the candidates and data of `manhattan_dot`, 12 scenarios plus
+12 held-out, 14-block approach radius) at 64 riders (`--n-bikes 64`; the family default is 48). One driver,
+`experiments/r8_k15.py`, runs it in stages that share `--out-dir` and resume from its records and cache:
+
+1. `--stage instances` builds and saves the 24 evenings once.
+2. `--stage dryrun` checks three gates: at most 45 s and 4 GB per evening priced, and a median site with at least
+   3 swaps. At 48 riders the median site made 2.5 swaps (`outputs/r8_k15/dryrun.json`), so the study runs at 64.
+3. `--stage search` runs the four starts, the site swaps, the size polish and the cost path up to 20 sites.
+4. `--stage final` re-prices on 12 + 12 evenings, closes each site once, and writes `layout.json` and
+   `site_stats.csv` (the map inputs).
+5. `--stage validate` runs the exact check; `--stage report` writes `RESULTS.md`.
+
+The result of record adds `--grid-kw 1000`, which lifts the shared 2 kW limit so that each site keeps only its own
+1.4 kW connection. It ran on one AWS r7i.4xlarge in 2.01 instance hours (2.13 USD), reusing the evenings of the
+shared-supply run; that run and the 48-rider trial took another 4.1 instance hours (4.35 USD). `--write-lanes`
+writes the 48-rider plan `outputs/cloud_lanes_k15/`; the 64-rider plans are `outputs/cloud_lanes_k15sp/` (result of
+record) and `outputs/cloud_lanes_k15n64/` (shared supply). On AWS:
+
+```bash
+# laptop (licence and bootstrap as above)
+deploy/aws/sync_up.sh --code-only             # code and data; copy ebike_swap_sim/outputs/cloud_lanes_k15*/ by hand
+# server (~/battery_swap)
+bash deploy/aws/r8_prod_check.sh --smoke      # pre-flight: code markers, 48-rider k15 plan (not k15sp), toy run of every stage
+export LANES_DIR=$PWD/ebike_swap_sim/outputs/cloud_lanes_k15sp
+bash deploy/aws/run_lanes.sh start $LANES_DIR/lanes.txt --max-threads 12
+bash deploy/aws/run_lanes.sh status           # or: run_lanes.sh logs ksp_search 40
+# laptop
+deploy/aws/sync_down.sh --path ebike_swap_sim/outputs/r8_k15_sp   # results back (into cloud_results/)
+```
+
+Final report: `ebike_swap_sim/outputs/r8_k15_sp/RESULTS.md`. Its dry-run line, like that of `r8_k15_n64`, prints a
+fixed label, "go: 48 riders / 240 orders"; both runs used 64 riders (`n_bikes` in `layout.json`).
+
 ## 3. Results
 
-All values are USD per day, set-up included. Every cost is an open-sites cost.
+All values are USD per day, set-up included. Every cost is an open-sites cost. Findings 1-4 come from the
+one-to-three-site study (8 riders, coordinated plan), Findings 5-7 from the fifteen-site study (64 riders, dispatch
+rule). Dollar values are comparable only within a study.
 
 | Budget | Best layout found | Cost | Lower bound | Gap |
 |---|---|---|---|---|
@@ -234,6 +316,8 @@ All values are USD per day, set-up included. Every cost is an open-sites cost.
 * For all-candidates riders the gap is 4.59 %; Site 34 is not proven best there.
 * 11 sites lie within 3 %, all between 13th and 54th Street. Only 23 of 59 candidates can work alone.
 * The approach radius changes the order: without it three Midtown sites tie and Site 34 is eighth.
+
+![Best one- and two-site layouts](docs/figs/fig_map.png)
 
 ### Finding 2: a second site cuts cost by a third
 
@@ -266,6 +350,54 @@ of the island.
 
 ![Daily cost by layout](docs/figs/fig_costs.png)
 
+### Finding 5: with fifteen sites, start at the bridges and tunnels
+
+Run: `ebike_swap_sim/outputs/r8_k15_sp/` (64 riders, dispatch rule, each site on its own connection); the map is at
+the top of this page.
+
+* The best layout found costs 9,081.4 (95 % CI 8,111.4-10,051.3) and serves 86.4 % of orders; held out, 9,234.6.
+* **Gateways (map 1-4, 9, 10):** one site within 1 km of each entry point: City Hall Park cabinet (Brooklyn
+  Bridge), Chinatown grid cell at Bowery & Division St (Manhattan Bridge), Essex Market pilot hub (Williamsburg
+  Bridge), Greenwich Village grid cell at 6th Ave & Bleecker St (Holland Tunnel), DOT Site 29 at 9th Ave & W 42nd St
+  (Lincoln Tunnel), Midtown East grid cell at 3rd Ave & E 53rd St (Queensboro Bridge). Riders enter with a quarter
+  to half a battery, so many swap soon after. These are the six busiest sites (6.5-8.1 swaps per evening); closing
+  one costs 628-1,272 more.
+* **East Village and Midtown (5-8, 11):** Cooper Square pilot hub, DOT Site 34, Swobbee cabinets at 836 6th Ave,
+  Citi Bike dock on W 42nd St, Midtown grid cell at 8th Ave & W 57th St.
+* **North of 59th Street (12-15):** grid cells at 2nd Ave & E 76th St and at Amsterdam Ave & W 80th St, Citi Bike
+  docks on W 92nd St and E 95th St. Only 16 % of the restaurants are here, but 41 % of the orders are delivered here.
+* Every site has 2 chargers; the four busiest hold 4 spares, the four quietest 2. With 3 spares at every site the
+  same sites cost $638.1 \pm 167.7$ more ($801.3 \pm 294.0$ held out).
+* Under one shared 2 kW supply the best layout found also has a site at every entry point
+  (`ebike_swap_sim/outputs/r8_k15_n64/`).
+
+### Finding 6: common siting rules cost 1,527-3,738 USD per day more
+
+| Fifteen-site layout | Extra cost (in sample) | Held-out (12 evenings) | Orders served |
+|---|---|---|---|
+| Spread rule | $+1{,}526.6 \pm 315.8$ | $+2{,}145.2 \pm 352.9$ | 80.0 % |
+| k-median | $+2{,}107.3 \pm 519.4$ | $+2{,}419.1 \pm 521.9$ | 78.1 % |
+| Coverage rule | $+3{,}255.9 \pm 698.6$ | $+3{,}694.6 \pm 657.7$ | 71.2 % |
+| DOT-first | $+3{,}339.3 \pm 1{,}027.8$ | $+4{,}064.1 \pm 374.0$ | 71.9 % |
+| Access rule | $+3{,}738.3 \pm 298.2$ | $+3{,}970.6 \pm 429.9$ | 68.6 % |
+
+k-median minimises the restaurant-to-site distance; DOT-first takes DOT pilot hubs and PEC sites first; the access
+rule ranks sites by inverse-distance access to restaurants. All intervals exclude zero, in sample and held out.
+Unserved orders make 78-92 % of each rule's extra cost; coverage, DOT-first and access also leave 18-34 % of the
+land more than 14 blocks from a site.
+
+### Finding 7: cost keeps falling beyond fifteen sites
+
+| Open sites (3 spares each) | 1 | 2 | 5 | 10 | 15 | 20 |
+|---|---|---|---|---|---|---|
+| Daily cost | 18,182.6 | 17,608.2 | 15,567.4 | 12,447.3 | 9,719.5 | 8,761.3 |
+| Orders served | 10.7 % | 19.4 % | 40.8 % | 67.8 % | 84.9 % | 89.9 % |
+
+One site is DOT Site 34 and two sites the best pair of Finding 2; the other points lie on the search paths and are
+not the best cost for each number of sites. Each added site saves about 190-680 a day against 13.19 of set-up.
+Twenty sites cost $320.1 \pm 195.7$ less than the polished fifteen in sample, but not significantly held out
+($538.8 \pm 548.6$): fifteen is a policy target, not an optimum.
+
 ### Context
 
 * **DOT 2024 pilot:** five public charging and swapping hubs (March-September 2024, swapping until February 2025);
@@ -291,14 +423,31 @@ Sources: `ebike_swap_sim/outputs/R6_DIGEST.md` and `R6_FILL_DIGEST.md`.
   and pilot layouts lose at least 33-136 USD per day (all regret intervals above zero).
 * **Not proven:** the one-site optimum for all-candidates riders (gap 4.59 %). The two- and three-unit answers are
   the best found by a heuristic pair search (gap 5.6-6.5 %); 11 screened pairs could not be ruled out.
+* **Not proven (fifteen sites):** the layout is the best found, with no bound. Its lead over the rule layouts is a
+  paired statistical result under dispatch-rule riders; nothing was solved exactly at 64 riders and 15 sites.
+* **Exact check (fifteen sites):** at 16 riders and five sites (9 of 9 solved to optimality) the rule costs 1.65-2.56
+  times the exact optimum (median 2.10) and ranks three layouts in the same order, but the optimum separates them
+  far less (by 7.7 and 45.1, not 207.8 and 607.5): Finding 6's dollar gaps hold for dispatch-rule riders only.
 
 ### Limitations
 
-* 12 demand evenings, 8 riders and about 40 orders per evening; the held-out check covers weekdays only.
+* One to three sites: 12 demand evenings, 8 riders and about 40 orders per evening; the held-out check covers
+  weekdays only.
 * A four-hour evening is too short for transfers or hubs to pay. End-of-evening stock is not valued.
-* Riders follow a coordinated full-information plan; real online costs would be higher.
+* In the one-to-three-site study riders follow a coordinated full-information plan; real online costs would be
+  higher.
+* Fifteen sites: the dispatch rule costs about twice the exact optimum at small scale; the spare polish stopped
+  after three rounds while still improving.
+* About 5.6 of the 64 riders per evening end queued at a site below the battery reserve; the rule reports this but
+  does not prevent it, and the cost does not charge it.
+* Charging one or two unserved-order penalties per such rider changes no comparison among the fifteen-site layouts,
+  but makes 20 sites significantly cheaper than the polished 15 held out as well.
+* Each of the fifteen sites has its own 1.4 kW connection, and two chargers draw at most 0.67 kW: chargers and
+  spares bind, not power (riders wait 31-79 minutes on average at the six gateway sites).
+* With one shared 2 kW supply, as in Findings 1-4, the same rule layouts cost 788-1,270 more and serve 7.5-9.6
+  points fewer orders, partly because the rule hands a shared supply to the sites in site-number order.
 * Citi Bike docks stand in for "a sidewalk place with power". Grid cells are not addresses. Cabinet space and
-  owner consent were not checked.
+  owner consent were not checked. DOT Site 29, a fifteen-site gateway, is opposed by its community board.
 
 ## 4. Reference reading
 
@@ -333,13 +482,20 @@ Longer notes on each paper are in [`reading/README.md`](reading/README.md). The 
   https://www.kaggle.com/datasets/ahsan81/food-ordering-and-delivery-app-dataset
 * Citi Bike GBFS station information (field `is_charging`).
   https://gbfs.lyft.com/gbfs/2.3/bkn/en/station_information.json
+* GeoDa Center, NYC Neighborhoods ACS 2008-12 (the city's 2010 neighborhood tabulation areas): Manhattan outline,
+  land and parks on the maps. https://geodacenter.github.io/data-and-lab/data/nycnhood_acs.zip
+* OpenStreetMap major streets and coastline (Overpass API extracts, October 2026): streets, bridges, tunnels and the
+  New Jersey shore on the fifteen-site map. © OpenStreetMap contributors, ODbL 1.0.
+  https://www.openstreetmap.org/copyright
 
 Download commands and checksums are in [`data/MANIFEST.md`](data/MANIFEST.md); the candidate list is
-`data/raw/dot_candidate_sites.csv`.
+`data/raw/dot_candidate_sites.csv`. The two OpenStreetMap extracts, `data/raw/osm_major_roads_manhattan.json` and
+`data/raw/osm_coastline_manhattan.json`, record their own query and licence.
 
 ## 5. Earlier rounds
 
-The siting study (round 7) builds on six earlier rounds of work on the operations model.
+The one-to-three-site study is round 7 and the fifteen-site study round 8. Both build on six earlier rounds of work
+on the operations model.
 
 | Round | Topic | Report |
 |---|---|---|
@@ -347,28 +503,33 @@ The siting study (round 7) builds on six earlier rounds of work on the operation
 | 4 | First bi-level siting on 12 Midtown candidates | `ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md` |
 | 5 | Reading-list extensions: aggregation, rolling horizon, network, RL, Manhattan family | `ebike_swap_sim/outputs/R5_DIGEST.md`; `ebike_swap_sim/outputs/r5_x*/RESULTS_final.md` |
 | 6 | Penalty recalibration, re-runs, first Manhattan siting pass | `ebike_swap_sim/outputs/R6_DIGEST.md`, `ebike_swap_sim/outputs/R6_FILL_DIGEST.md`; `ebike_swap_sim/outputs/r6_penalty/`, `ebike_swap_sim/outputs/r6_fill/`, `ebike_swap_sim/outputs/r6_o2/RESULTS_final.md` |
-| 7 | Production siting on 59 DOT-based candidates | `ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md` |
+| 7 | Production siting of one to three sites on 59 DOT-based candidates | `ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md` |
+| 8 | Fifteen sites at 64 riders under the dispatch rule; shared-supply sensitivity; 48-rider trial | `ebike_swap_sim/outputs/r8_k15_sp/RESULTS.md`; `ebike_swap_sim/outputs/r8_k15_n64/RESULTS.md`; `ebike_swap_sim/outputs/r8_k15/` |
 
 Modelling decisions are recorded in `notes/DECISIONS.md`; the siting design is in `notes/bilevel_siting_design.md`
-and `notes/siting_scaleup_design.md`.
+and `notes/siting_scaleup_design.md`, the fifteen-site design in `notes/siting15_design.md`. Every fifteen-site
+number is traced to its file in `notes/r8_results_facts.md` (shared supply: `notes/r8_results_facts_planA.md`);
+`notes/verify/r8_facts.py` re-derives them from the downloaded server results in `cloud_results/`, which stay
+local.
 
 ## 6. Repository map
 
 ```
 .
 ├── README.md                 this file
-├── docs/figs/                figures used in this README
-├── data/                     public raw data, MANIFEST.md, validate.py
+├── docs/figs/                figures used in this README (copies of the paper figures)
+├── data/                     public raw data (with two OpenStreetMap extracts), MANIFEST.md, validate.py
 ├── food_order.csv            FoodHub order sample (preparation times, cuisine mix)
 ├── reading/README.md         reading notes on the five papers
-├── notes/                    design notes, decisions, cost calibration, dataset notes
-├── deploy/aws/               AWS scripts: sync, bootstrap, lane dispatcher, pre-flight check
+├── notes/                    design notes, decisions, facts sheets, cost calibration, dataset notes
+├── deploy/aws/               AWS scripts: sync, bootstrap, lane dispatcher, pre-flight checks, watchdog
+├── paper_itsc/figs/src/      paper figure and count scripts (they write to paper_itsc/figs/, which stays local)
 └── ebike_swap_sim/
     ├── ebike_swap_sim/       the package (model, data, siting, bounds)
-    ├── experiments/          one driver per experiment and round (r7_siting.py, r7_search.py, ...)
+    ├── experiments/          one driver per experiment and round (r7_siting.py, r7_search.py, r8_k15.py, ...)
     ├── tests/                pytest suite
     └── outputs/              records and reports per experiment
 ```
 
-Not in the repository: the Gurobi licence, AWS keys and connection file, per-solve caches and snapshots,
-copyrighted PDFs, and paper drafts.
+Not in the repository: the Gurobi licence, AWS keys and connection file, per-solve caches and snapshots, the
+downloaded server results (`cloud_results/`), copyrighted PDFs, and paper drafts.

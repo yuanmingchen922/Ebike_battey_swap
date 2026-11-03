@@ -477,7 +477,16 @@ def unservable_orders(inst: Instance, lib: ArcLibrary) -> List[Any]:
     ``r 37, a 44``).  Both the ILP and the policy pay ``P_i`` for them, so they
     inflate the raw drop rate of both identically and dilute the relative gap;
     report ``served_share_servable = n_served / (|I| - n_unservable)`` next to the
-    raw share."""
+    raw share.
+
+    R8 (lane L2): the test reads the id index ``lib._deliv`` (a list per order on the
+    per-bike library, a lazy id sequence on ``arcs.UnionArcLibrary``) instead of
+    materialising ``delivery_arcs(i)`` over every bike -- the same emptiness test (an order
+    has a delivery arc iff its id list is non-empty), but O(bikes) rank queries per order
+    instead of O(bikes x specs) ``Arc`` objects (48 riders x 15 sites: 190 s -> 0.1 s)."""
+    deliv = getattr(lib, "_deliv", None)
+    if deliv is not None:
+        return [o.id for o in inst.orders if not len(deliv.get(o.id, ()))]
     return [o.id for o in inst.orders if not lib.delivery_arcs(o.id)]
 
 

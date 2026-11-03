@@ -1,0 +1,68 @@
+{
+ "lanes": [
+  {
+   "name": "k15_instances",
+   "threads": 8,
+   "after": "-",
+   "stage": "instances",
+   "command": "R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage instances --workers 8 --max-threads 8 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20",
+   "hours": 0.7,
+   "usd": 0.74
+  },
+  {
+   "name": "k15_dryrun",
+   "threads": 8,
+   "after": "k15_instances",
+   "stage": "dryrun",
+   "command": "R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage dryrun --workers 8 --max-threads 8 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20",
+   "hours": 0.5,
+   "usd": 0.53
+  },
+  {
+   "name": "k15_validate",
+   "threads": 12,
+   "after": "k15_dryrun",
+   "stage": "validate",
+   "command": "R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage validate --workers 8 --max-threads 12 --validate-workers 4 --validate-threads 3 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20",
+   "hours": 1.5,
+   "usd": 1.59
+  },
+  {
+   "name": "k15_search",
+   "threads": 8,
+   "after": "k15_dryrun",
+   "stage": "search",
+   "command": "R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage search --workers 8 --max-threads 8 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20",
+   "hours": 2.2,
+   "usd": 2.33
+  },
+  {
+   "name": "k15_final",
+   "threads": 8,
+   "after": "k15_search",
+   "stage": "final",
+   "command": "R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage final --workers 8 --max-threads 8 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20",
+   "hours": 1.0,
+   "usd": 1.06
+  },
+  {
+   "name": "k15_report",
+   "threads": 1,
+   "after": "k15_final",
+   "stage": "report",
+   "command": "R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage report --workers 8 --max-threads 1 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20",
+   "hours": 0.1,
+   "usd": 0.11
+  }
+ ],
+ "instance": "r7i.4xlarge",
+ "usd_per_h": 1.0584,
+ "usable_threads": 12,
+ "max_rss_gb": 110.0,
+ "out_dir": "outputs/r8_k15",
+ "workers": 8,
+ "validate_workers": 4,
+ "validate_threads": 3,
+ "total_hours": 6.0,
+ "total_usd": 6.35
+}

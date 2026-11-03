@@ -39,14 +39,22 @@ lossless.
 
 This module does not import gurobipy; the Gurobi side is ``ilp.build_model(...,
 aggregate=True)`` and ``ilp.build_submodel(..., aggregate=True)``.
+
+R8 (2026-10-28): on a :class:`~ebike_swap_sim.arcs.UnionArcLibrary` the constructor takes a
+fast path (:meth:`AggregatedNetwork._init_union`) that builds the same aggregated network
+(same arcs in the same order, same bounds) from the union columns without materialising
+any per-bike arc; ``arcs`` is then a lazy sequence and ``Commodity.arc_ids`` are ranges.
 """
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence as _Seq
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
-from .arcs import SINK, Arc, ArcLibrary, arc_key
+import numpy as np
+
+from .arcs import SINK, Arc, ArcLibrary, UnionArcLibrary, arc_key, coreach_sweep
 from .or_instance import Instance
 
 __all__ = ["AggregatedNetwork", "Commodity", "AggregationError", "AGG_MODES",
@@ -140,6 +148,10 @@ class AggregatedNetwork:
         self.lib = lib
         self.requested_mode = mode
         self.n_bike_arcs = len(lib)
+        self._union: bool = isinstance(lib, UnionArcLibrary)
+        if self._union:
+            self._init_union(inst, lib, mode, prune)   # R8: no per-bike materialisation
+            return
 
         # ---------------------------------------------- union arcs (first copy wins)
         uid_of: Dict[Key, int] = {}
@@ -285,6 +297,124 @@ class AggregatedNetwork:
             - len(self.arcs)
         self.n_union = len(union)
 
+    # ------------------------------------------------- union library fast path (R8)
+    def _init_union(self, inst: Instance, lib: UnionArcLibrary, mode: str, prune: bool) -> None:
+        """Same aggregated network as the generic constructor builds from the per-bike
+        library ``build_arcs`` would have produced, computed on the union columns: union
+        arcs in first-copy-wins order (bikes in ``inst.bikes`` order, each bike's arcs in
+        template order), classes = the library's bike classes (closed by construction),
+        reachability from the library's bitmask sweep, co-reachability by one backward
+        sweep over the union arcs (:func:`arcs.coreach_sweep`), ``ub`` / ``term_ub`` /
+        ``n_dropped`` as before; ``arcs`` is a lazy sequence and ``arc_ids`` are ranges."""
+        n = lib.n_specs
+        nb = len(inst.bikes)
+        src, dst = lib._src, lib._dst
+        n_states = lib._n_states
+        classes = [{"source": lib.class_source[c], "bikes": list(lib.class_bikes[c]),
+                    "n_arcs": int(lib._view[c].count)} for c in range(lib.n_classes)]
+        # union order: first bike (in inst.bikes order) whose arc set holds the spec
+        first = np.full(n, nb, dtype=np.int32)
+        seen: Set[int] = set()
+        for k_idx, b in enumerate(inst.bikes):
+            c = lib.class_of_bike[b.id]
+            if c in seen:
+                continue
+            seen.add(c)
+            m = lib._view[c].mask()
+            first[(first == nb) & m] = k_idx
+        n_union = int((first < nb).sum())
+        u_order = np.lexsort((np.arange(n), first))[:n_union]
+        self.n_union = n_union
+        # per-state reachability (bit c of the library's sweep) and bike counts
+        R = lib._reach
+        reach_bits = []
+        reach_count = np.zeros(n_states, dtype=np.int64)
+        for c in range(lib.n_classes):
+            bits = ((R[:, c >> 6] >> np.uint64(c & 63)) & np.uint64(1)).astype(bool)
+            reach_bits.append(bits)
+            reach_count += len(classes[c]["bikes"]) * bits
+        reach_any = reach_count > 0
+        co = coreach_sweep(src[u_order], dst[u_order], lib._state_t, lib._sink_sid, inst.H + 2) if prune else None
+        self.closed = True
+        eff = "single" if mode in ("single", "auto") else "groups"
+        self.mode = eff
+        self.classes = classes
+        self.commodities = []
+        self.term_ub = {}
+        self._commodity_of_bike = {}
+        self._index = {}
+        kind = lib._kind
+        fidx = lib._fidx
+        deliver_code = 2
+        term_code = 4
+        t_lo, t_hi = lib._block["term"]
+        real_term = np.arange(t_lo, t_hi)[fidx[t_lo:t_hi] >= 0]
+        if eff == "single":
+            keep = reach_any[src[u_order]]
+            if prune:
+                keep &= co[dst[u_order]]
+            agg_specs = u_order[keep]
+            bikes = [b.id for b in inst.bikes]
+            supply: Dict[State, int] = defaultdict(int)
+            for cl in classes:
+                supply[cl["source"]] += len(cl["bikes"])
+            self.commodities.append(Commodity(0, bikes, dict(supply), range(len(agg_specs))))
+            for k in bikes:
+                self._commodity_of_bike[k] = 0
+            ub = reach_count[src[agg_specs]]
+            ub[kind[agg_specs] == deliver_code] = 1
+            for c, cl in enumerate(classes):
+                facs = np.unique(fidx[real_term[reach_bits[c][src[real_term]]]]) if real_term.size else []
+                for fi in facs:
+                    j = lib._fac_ids[int(fi)]
+                    self.term_ub[(0, j)] = self.term_ub.get((0, j), 0) + len(cl["bikes"])
+            agg_of_spec = np.full(n, -1, dtype=np.int64)
+            agg_of_spec[agg_specs] = np.arange(len(agg_specs))
+            self._agg_of_spec = [agg_of_spec]
+            self._agg_com = None
+            n_before = n_union
+        else:
+            parts: List[np.ndarray] = []
+            com_of: List[np.ndarray] = []
+            self._agg_of_spec = []
+            start = 0
+            n_before = 0
+            for c, cl in enumerate(classes):
+                own = lib._view[c].indices()
+                n_before += own.size
+                keep_c = reach_bits[c][src[own]]
+                if prune:
+                    keep_c &= co[dst[own]]
+                specs_c = own[keep_c]
+                m_c = len(cl["bikes"])
+                self.commodities.append(Commodity(c, list(cl["bikes"]), {cl["source"]: m_c},
+                                                  range(start, start + specs_c.size)))
+                for k in cl["bikes"]:
+                    self._commodity_of_bike[k] = c
+                facs = np.unique(fidx[specs_c[(kind[specs_c] == term_code) & (fidx[specs_c] >= 0)]])
+                for fi in facs:
+                    self.term_ub[(c, lib._fac_ids[int(fi)])] = m_c
+                a_c = np.full(n, -1, dtype=np.int64)
+                a_c[specs_c] = start + np.arange(specs_c.size)
+                self._agg_of_spec.append(a_c)
+                parts.append(specs_c)
+                com_of.append(np.full(specs_c.size, c, dtype=np.int32))
+                start += specs_c.size
+            agg_specs = np.concatenate(parts) if parts else np.zeros(0, dtype=np.int64)
+            self._agg_com = np.concatenate(com_of) if com_of else np.zeros(0, dtype=np.int32)
+            ub = np.array([len(classes[c]["bikes"]) for c in self._agg_com], dtype=np.int64) if agg_specs.size else np.zeros(0, dtype=np.int64)
+            if agg_specs.size:
+                ub[kind[agg_specs] == deliver_code] = 1
+        self._agg_specs = agg_specs.astype(np.int64)
+        self.ub = ub.astype(np.int64)
+        self.arcs = _AggArcSeq(self)
+        self.n_dropped = int(n_before - agg_specs.size)
+
+    def _agg_arc(self, aid: int) -> Arc:
+        s = int(self._agg_specs[aid])
+        c = 0 if self._agg_com is None else int(self._agg_com[aid])
+        return self.lib._make(c, s, int(aid))
+
     # ------------------------------------------------------------- lookups
     def __len__(self) -> int:
         return len(self.arcs)
@@ -300,6 +430,11 @@ class AggregatedNetwork:
     def agg_id(self, k: Any, a: Arc) -> Optional[int]:
         """Aggregated arc id that carries the per-bike arc ``a`` of bike ``k``
         (``None`` if the arc was dropped as unable to carry flow)."""
+        if self._union:
+            _k, s = self.lib.spec_of_id(a.id)
+            c = self._commodity_of_bike[k]
+            aid = int(self._agg_of_spec[0 if self._agg_com is None else c][s])
+            return None if aid < 0 else aid
         return self._index.get((self._commodity_of_bike[k], arc_key(a)))
 
     def summary(self) -> Dict[str, Any]:
@@ -389,12 +524,43 @@ class AggregatedNetwork:
         return out
 
     def _lib_arc_id(self, k: Any, aid: int) -> int:
+        if self._union:
+            try:
+                return self.lib.id_of(k, int(self._agg_specs[aid]))
+            except KeyError as exc:
+                raise AggregationError(f"bike {k} has no arc for aggregated arc {aid} (class closure violated)") from exc
         a = self.arcs[aid]
         key = arc_key(a)
         for b in self.lib.out_arcs(k, a.src):
             if arc_key(b) == key:
                 return b.id
         raise AggregationError(f"bike {k} has no arc with key {key} (class closure violated)")
+
+
+class _AggArcSeq(_Seq):
+    """Lazy ``AggregatedNetwork.arcs`` on a union library: ``seq[aid]`` materialises the
+    aggregated arc (``Arc.k`` = commodity id), iteration runs in aggregated id order."""
+    __slots__ = ("_net",)
+
+    def __init__(self, net: AggregatedNetwork) -> None:
+        self._net = net
+
+    def __len__(self) -> int:
+        return int(self._net._agg_specs.shape[0])
+
+    def __getitem__(self, i: Any) -> Any:
+        if isinstance(i, slice):
+            return [self._net._agg_arc(j) for j in range(*i.indices(len(self)))]
+        i = int(i)
+        if i < 0:
+            i += len(self)
+        if not (0 <= i < len(self)):
+            raise IndexError(i)
+        return self._net._agg_arc(i)
+
+    def __iter__(self) -> Iterator[Arc]:
+        for i in range(len(self)):
+            yield self._net._agg_arc(i)
 
 
 def aggregate_network(inst: Instance, lib: ArcLibrary, mode: str = "auto",

@@ -74,6 +74,8 @@ import threading
 import time
 import traceback
 from collections import OrderedDict
+
+import numpy as np
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -95,6 +97,7 @@ __all__ = [
     "POLICIES", "LEVERS", "RULES", "aggregate_available", "apply_variant", "lever_table", "compliance_sweep",
     "demand_weights", "access_weights", "isolation_values", "rule_layout", "rule_baselines", "present_day_sites",
     "capacity_matched_layout", "PRESENT_DAY_FILES", "bd_stopped", "dot_pilot_layout", "stratified_ci", "paired_ci",
+    "SERVICE_GATE", "service_gate", "ProxyScreen", "k_median_layout", "dot_first_layout", "top_sites",
 ]
 
 #: Bump when the semantics of a cached lower-level row change (invalidates the cache).
@@ -123,6 +126,19 @@ def bd_stopped(row: Dict[str, Any]) -> bool:
 #: Lower-level policies of the evaluator: the E2 ILP (system optimum), the R2.3 baseline policy and
 #: follower ``E`` = the ``r5_selfish`` equilibrium (plan item M4).
 POLICIES: Tuple[str, ...] = ("ilp", "baseline", "selfish")
+#: R8 fifteen-site study (``notes/siting15_design.md`` section 3): the served-share gate of the
+#: search per lower-level policy.  The ILP gate of the E9 relaunch (0.5) is unchanged; under the
+#: rule-based simulator every single-site layout served 0.29-0.33 of the orders in the probes, so
+#: the gate is 0 there and the served share is REPORTED on every record instead.
+SERVICE_GATE: Dict[str, float] = {"ilp": 0.5, "baseline": 0.0, "selfish": 0.0}
+
+
+def service_gate(policy: str, override: Optional[float] = None) -> float:
+    """Served-share gate of :func:`greedy_local_search`: ``override`` when given (the historical
+    ``min_served_share`` argument), else :data:`SERVICE_GATE` of the policy."""
+    if override is not None:
+        return float(override)
+    return float(SERVICE_GATE.get(policy, 0.5))
 
 
 def aggregate_available() -> bool:
@@ -1004,6 +1020,43 @@ class LowerLevelEvaluator:
                    n_unservable=len(C.unservable_orders(inst, lib)))
         return self._store(row, sched, inst, lib)
 
+    def store_external_row(self, layout: Layout, s: int, policy: str, row: Dict[str, Any],
+                           portable: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """R8 (critic C1): store a lower-level row computed in ANOTHER process (a worker of
+        ``experiments/r8_k15.py`` that priced the cell on its own single-scenario evaluator) under
+        this evaluator's cache key of ``(layout, s, policy)``.  The row's own ``key`` (when the
+        worker computed one) must match: the key is the MD5 of the family, seed, demand hash,
+        layout, spec, reposition mode, pruning signature, switches, policy and params, so a
+        mismatch means the worker ran another configuration and the row is refused.  ``portable``
+        = the portable schedule to keep next to the row (``schedules/<key>.json`` with a cache
+        directory, in memory otherwise).  :data:`ERROR` rows are returned unchanged and never
+        cached (as for rows of this process)."""
+        key = self.cache_key(layout, s, policy)
+        if row.get("key") not in (None, key):
+            raise ValueError(f"external row key {row.get('key')} differs from this evaluator's key {key} "
+                             f"for {layout.key()} s{s} {policy}: configurations differ")
+        out = dict(row)
+        out.pop("_portable", None)
+        out.update(key=key, scenario=int(s), p=self.p[s], cache_hit=False)
+        if out.get("status") == ERROR:
+            with self._lock:
+                self.n_errors += 1
+                self.new_rows.append(out)
+            return out
+        if portable is not None and self.sched_dir:
+            path = os.path.join(self.sched_dir, key + ".json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(portable, fh)
+            out["schedule_path"] = path
+        elif portable is not None:
+            out["_portable"] = portable
+        with self._lock:
+            self.cache[key] = out
+            self.new_rows.append(out)
+            if self.index_path:
+                self._C.append_jsonl(self.index_path, {k: v for k, v in out.items() if not k.startswith("_")})
+        return out
+
     def evaluate(self, layout: Layout, policy: str = "ilp", bound: Optional[Sequence[float]] = None,
                  best: Optional[float] = None, scenarios: Optional[Sequence[int]] = None,
                  warm: Optional[Dict[int, Dict[str, Any]]] = None) -> Dict[str, Any]:
@@ -1347,6 +1400,15 @@ def exhaustive(evaluator: LowerLevelEvaluator, candidates: Sequence[Candidate], 
 # ---------------------------------------------------------------------------
 # (C) greedy forward selection + local search
 # ---------------------------------------------------------------------------
+def _prefetch(evaluator: Any, layouts: Sequence[Layout]) -> None:
+    """R8 (critic C1): an evaluator with a ``prefetch(layouts)`` method (the process-pool evaluator
+    of ``experiments/r8_k15.py``) prices the cells of several layouts at once before the search
+    reads them one by one; every other evaluator is unaffected."""
+    fn = getattr(evaluator, "prefetch", None)
+    if fn is not None and layouts:
+        fn(list(layouts))
+
+
 def _screen(evaluator: LowerLevelEvaluator, layouts: Sequence[Layout], k: int,
             by_group: Optional[Callable[[Layout], Any]] = None,
             score: Optional[Callable[[Layout], float]] = None) -> List[Tuple[float, Layout]]:
@@ -1385,8 +1447,9 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
                         start: Optional[Layout] = None,
                         access: Optional[Dict[str, Sequence[str]]] = None, budget_levels: Optional[Sequence[float]] = None,
                         on_step: Optional[Callable[[Dict[str, Any]], None]] = None, screen: Any = True,
-                        local_search: bool = True, min_served_share: float = 0.5, s_needs_charge: bool = False,
-                        access_mode: str = "repair", policy: str = "ilp") -> Dict[str, Any]:
+                        local_search: bool = True, min_served_share: Optional[float] = 0.5, s_needs_charge: bool = False,
+                        access_mode: str = "repair", policy: str = "ilp", force_k: Optional[int] = None,
+                        swap_neighbourhood: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     """Algorithm (C): best-singleton start, forward selection, local search per budget level.
 
     ``policy`` is the lower level that prices every move (default ``'ilp'``, the written
@@ -1434,7 +1497,25 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
     ``screen``: ``True`` / ``'baseline'`` (default, unchanged) ranks moves by the baseline
     policy value, ``False`` prices every move, and a callable ``layout -> score`` (plan item O2:
     ``benders.LPScreen``, cut envelope then LP recourse value) replaces the baseline value; the
-    ``k_screen`` best per added role are kept as before."""
+    ``k_screen`` best per added role are kept as before.
+
+    R8 fifteen-site study (``notes/siting15_design.md`` section 3, ``experiments/r8_k15.py``):
+
+    * ``force_k`` -- cardinality mode: the forward selection continues until exactly ``force_k``
+      locations are open, accepting at every step the priced addition with the LOWEST ``V`` even
+      when ``V`` rises (the greedy path records ``V(k)`` for every ``k``, ``out['path_k']``);
+      ``add`` / ``drop`` moves are disabled in the local search, and every budget level is served
+      by the frontier layout with exactly ``force_k`` locations (``NO_FEASIBLE_LAYOUT`` with the
+      reason when the path did not reach ``k``).  ``None`` = the budget mode above (unchanged).
+    * ``min_served_share=None`` -- the per-policy gate :func:`service_gate` (0.5 for the ILP as
+      before, 0 for the simulator / follower E, whose served share is reported instead).
+    * ``swap_neighbourhood={'nearest': 3, 'proxy_best': 5}`` -- restricted swap moves: an open
+      site may move only to its ``nearest`` closed candidates (grid distance) or to the
+      ``proxy_best`` closed candidates by the ``screen`` score of adding them; ``None`` = every
+      closed candidate (unchanged).
+    * ``screen`` may be a :class:`ProxyScreen` (library-free demand-distance proxy, milliseconds);
+      an evaluator with a ``prefetch`` method prices the screened layouts of a step in one batch
+      (the process pool of critic C1) before they are read one by one."""
     if access_mode not in ("repair", "report", "enforce"):
         raise ValueError(f"access_mode must be repair, report or enforce (got {access_mode!r})")
     score_fn: Optional[Callable[[Layout], float]] = screen if callable(screen) else None
@@ -1453,7 +1534,13 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
     priced: Dict[str, Tuple[str, float, Dict[str, Any]]] = {}
     class_counts: Dict[str, int] = {}
     exhausted = [False]
-    min_share = float(min_served_share)
+    min_share = service_gate(policy, min_served_share)
+    k_fix = None if force_k is None else int(force_k)
+    if k_fix is not None:
+        if k_fix < 1:
+            raise ValueError("force_k must be >= 1")
+        moves = tuple(m for m in moves if m not in ("add", "drop"))
+    node_of = {c.id: c.node for c in candidates}
 
     def uncovered(l: Layout) -> List[str]:
         return [] if access is None else uncovered_zones(l, access)
@@ -1515,6 +1602,10 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
     lam: Optional[Layout] = None
     v_lam = INF
     if start is not None and start.n_open:
+        # R8 fix (reviewer, major): the start layout must be priced by the pool too, else the
+        # OfflineEvaluator raises inside evaluate_scenario, the start becomes ERROR and the
+        # restart silently falls back to the singleton search from empty.
+        _prefetch(evaluator, [start])
         cls, v, ev = price(start)
         record("start", start, cls, v, ev)
         if cls == "OK":
@@ -1527,6 +1618,7 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
                 else [(INF, x) for x in singles])
         usable: List[Tuple[Layout, float]] = []
         seen_keys = set()
+        _prefetch(evaluator, [x for _bv, x in pool])
         for bv, x in pool:
             if exhausted[0]:
                 break
@@ -1537,6 +1629,7 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
                 usable.append((x, v))
         if not usable and not exhausted[0]:
             # fallback: price every remaining admissible singleton (exhaustive singletons)
+            _prefetch(evaluator, [x for x in singles if x.key() not in seen_keys])
             for x in singles:
                 if x.key() in seen_keys or exhausted[0]:
                     continue
@@ -1554,6 +1647,9 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
 
     # 2. forward selection -------------------------------------------------------------------------
     while lam is not None and not exhausted[0]:
+        if k_fix is not None and lam.n_open >= k_fix:
+            record("forward_stop", lam, "OK", v_lam, None, {"reason": f"reached force_k = {k_fix}", "k": lam.n_open})
+            break
         adds = [lam.add((l, r, B, C)) for l in ids if lam.item(l) is None for (r, B, C) in grid]
         adds = [a for a in adds if admissible(a, bmax)]
         if not adds:
@@ -1561,6 +1657,7 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
             break
         top = (_screen(evaluator, adds, k_screen, by_group=lambda a, p=lam: _added_role(p, a), score=score_fn) if screen
                else [(INF, a) for a in adds])
+        _prefetch(evaluator, [a for _bv, a in top if a.key() not in priced])
         scored: List[Tuple[float, float, Layout]] = []
         for bv, a in top:
             cls, va, ev = price(a)
@@ -1574,27 +1671,53 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
             record("forward_stop", lam, "OK", v_lam, None,
                    {"reason": WALL_EXHAUSTED if exhausted[0] else "no usable addition (all infeasible / low service)"})
             break
-        scored.sort(key=lambda t: (-t[0], t[2].key()))
+        if k_fix is not None:        # force_k: the lowest V is accepted, even when V rises (V(k) path)
+            scored.sort(key=lambda t: (t[1], t[2].key()))
+        else:
+            scored.sort(key=lambda t: (-t[0], t[2].key()))
         gain, va, a = scored[0]
-        if va >= v_lam - _TOL:
+        if k_fix is None and va >= v_lam - _TOL:
             record("forward_stop", lam, "OK", v_lam, None, {"reason": "no improving addition", "best_rejected": a.key(),
                                                             "rejected_V": va})
             break
         lam, v_lam = a, va
         frontier.append((lam, v_lam))
-        record("forward_accept", lam, "OK", v_lam, None, {"gain_per_usd": gain})
+        record("forward_accept", lam, "OK", v_lam, None, {"gain_per_usd": gain, "k": lam.n_open})
 
     # 3. per budget level: local search (+ access repair) ------------------------------------------
+    def swap_targets(lam_b: Layout) -> Dict[str, List[str]]:
+        """Closed candidates each open site may move to (R8 ``swap_neighbourhood``: the
+        ``nearest`` closed candidates of the site by grid distance plus the ``proxy_best`` closed
+        candidates by the screen score of adding them to the layout; every closed candidate
+        without the option or without a score function)."""
+        closed = [l2 for l2 in ids if lam_b.item(l2) is None]
+        if not swap_neighbourhood or not lam_b.open:
+            return {it[0]: list(closed) for it in lam_b.open}
+        n_near = int(swap_neighbourhood.get("nearest", 0) or 0)
+        n_best = int(swap_neighbourhood.get("proxy_best", 0) or 0)
+        best: List[str] = []
+        if n_best > 0 and score_fn is not None:
+            _l0, r0, B0, C0 = lam_b.open[0]
+            ranked = sorted(closed, key=lambda c: (score_fn(lam_b.add((c, r0, B0, C0))), ids.index(c)))
+            best = ranked[:n_best]
+        out: Dict[str, List[str]] = {}
+        for l, _r, _B, _C in lam_b.open:
+            near = (sorted(closed, key=lambda c: (manhattan_blocks(node_of[l], node_of[c]), ids.index(c)))[:n_near]
+                    if n_near > 0 else [])
+            seen_t = set()
+            out[l] = [c for c in near + best if not (c in seen_t or seen_t.add(c))]
+        return out
+
     def neighbours(lam_b: Layout, b: float, allowed: Sequence[str], cover_floor: Optional[int]) -> List[Layout]:
         neigh: List[Layout] = []
+        targets = swap_targets(lam_b) if "swap" in allowed else {}
         for it in lam_b.open:
             l, r, B, C = it
             if "drop" in allowed and lam_b.n_open > 1:
                 neigh.append(lam_b.drop(l))
             if "swap" in allowed:
-                for l2 in ids:
-                    if lam_b.item(l2) is None:
-                        neigh.append(lam_b.replace(l, (l2, r, B, C)))
+                for l2 in targets.get(l, []):
+                    neigh.append(lam_b.replace(l, (l2, r, B, C)))
             if "role" in allowed:
                 for r2 in roles:
                     if r2 == r:
@@ -1638,6 +1761,7 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
             if not uniq:
                 break
             top = _screen(evaluator, uniq, k_screen, score=score_fn) if screen else [(INF, n) for n in uniq]
+            _prefetch(evaluator, [n for _bv, n in top if n.key() not in priced])
             for _bv, n in top:
                 cls, vn, ev = price(n)
                 hist.append({"step": f"{tag}_pass{passes}", "layout_key": n.key(), "status": cls, "V": (None if vn == INF else vn),
@@ -1682,12 +1806,16 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
     per_budget: Dict[float, Dict[str, Any]] = {}
     for b in levels:
         cand = [(l, v) for l, v in frontier if l.investment(spec) <= b + 1e-9]
-        if best_single is not None and best_single[0].investment(spec) <= b + 1e-9:
+        if k_fix is not None:
+            cand = [(l, v) for l, v in cand if l.n_open == k_fix]
+        elif best_single is not None and best_single[0].investment(spec) <= b + 1e-9:
             cand.append(best_single)
         if not cand:
             status = WALL_EXHAUSTED if exhausted[0] else NO_FEASIBLE_LAYOUT
             per_budget[b] = {"layout": None, "value": None, "history": [], "status": status,
-                             "reasons": dict(class_counts), "search_complete": not exhausted[0]}
+                             "reasons": dict(class_counts), "search_complete": not exhausted[0],
+                             **({"reason": f"the forward selection did not reach force_k = {k_fix} within the budget"}
+                                if k_fix is not None else {})}
             record("budget_result", Layout(), status, INF, None, {"budget": b, "reasons": dict(class_counts)})
             continue
         lam_b, v_b = min(cand, key=lambda t: (t[1], t[0].key()))
@@ -1704,10 +1832,14 @@ def greedy_local_search(evaluator: LowerLevelEvaluator, candidates: Sequence[Can
                          "access_repaired": repaired, "search_complete": not exhausted[0],
                          "served_share": (priced.get(lam_b.key(), (None, None, {}))[2] or {}).get("served_share")}
         record("local_search_result", lam_b, "OK", v_b, None, {"budget": b, "search_complete": not exhausted[0]})
+    path_k: Dict[int, Tuple[str, float]] = {}
+    for l, v in frontier:                      # the last frontier layout of every cardinality (the greedy path)
+        path_k[l.n_open] = (l.key(), v)
     return {"per_budget": per_budget, "frontier": [(l.key(), v) for l, v in frontier],
             "best_singleton": (None if best_single is None else (best_single[0].key(), best_single[1])),
             "history": history, "class_counts": dict(class_counts), "wall_exhausted": exhausted[0],
-            "evaluator": evaluator.stats(), "policy": policy}
+            "evaluator": evaluator.stats(), "policy": policy, "force_k": k_fix, "min_served_share": min_share,
+            "path_k": path_k}
 
 
 # ---------------------------------------------------------------------------
@@ -2557,6 +2689,178 @@ def lever_table(evaluator: LowerLevelEvaluator, layout: Layout, policies: Sequen
                 best.append({"lever": lever, "policy": pol, "site": None, "d_V": None})
     return {"layout_key": layout.key(), "reference": {p: (None if ref[p]["V"] in (None, INF) else ref[p]["V"]) for p in policies},
             "rows": rows, "best": best}
+
+
+# ---------------------------------------------------------------------------
+# R8 fifteen-site study: library-free proxy screen and the warm starts of the exactly-k search
+# ---------------------------------------------------------------------------
+class ProxyScreen:
+    """Library-free proxy score of a layout for RANKING neighbours in the exactly-k search
+    (``notes/siting15_design.md`` section 3; milliseconds, no arc library, no simulation):
+
+    ``score(lambda) = block_km x sum_s p_s sum_i P_i x blocks(o_i, nearest open swap-capable site)
+    + C_setup(lambda)``, i.e. the p-weighted order penalty times the grid distance from every
+    order's restaurant to the nearest open swap-capable site, plus the allocated set-up cost of
+    the layout (so that the free-k comparison trades sites against reach).  Lower is better; a
+    layout without a swap-capable site scores ``inf``.  Used as ``screen=ProxyScreen(...)`` in
+    :func:`greedy_local_search` (the ``k_screen`` best per group are then priced by the lower
+    level, which alone decides acceptance) and by :func:`k_median_layout`."""
+
+    def __init__(self, candidates: Sequence[Candidate], scenarios: Sequence[Instance],
+                 probabilities: Optional[Sequence[float]] = None, spec: Optional[SitingSpec] = None,
+                 block_km: float = 0.15) -> None:
+        self.ids: List[str] = [c.id for c in candidates]
+        self.idx: Dict[str, int] = {l: i for i, l in enumerate(self.ids)}
+        nodes = [c.node for c in candidates]
+        n = len(scenarios)
+        p = [1.0 / n] * n if probabilities is None else [float(x) for x in probabilities]
+        rows: List[List[int]] = []
+        w: List[float] = []
+        self.order_nodes: List[Any] = []
+        for ps, inst in zip(p, scenarios):
+            for o in inst.orders:
+                rows.append([manhattan_blocks(o.o, v) for v in nodes])
+                w.append(ps * float(o.P))
+                self.order_nodes.append(o.o)
+        self.D = np.asarray(rows, dtype=float) if rows else np.zeros((0, len(nodes)), dtype=float)
+        self.w = np.asarray(w, dtype=float)
+        self.spec = spec
+        self.block_km = float(block_km)
+        self.n_calls = 0
+
+    def demand_cost(self, locations: Iterable[str]) -> float:
+        """``block_km x sum_i w_i x min over the given locations of the grid distance``."""
+        cols = [self.idx[l] for l in locations if l in self.idx]
+        if not cols:
+            return INF
+        if not self.D.size:
+            return 0.0
+        d = self.D[:, cols].min(axis=1)
+        return float((d * self.w).sum()) * self.block_km
+
+    def score(self, layout: Layout) -> float:
+        self.n_calls += 1
+        v = self.demand_cost([l for l, r, _B, _C in layout.open if ROLE_SWAP[r]])
+        if v == INF:
+            return INF
+        return v + (layout.allocated_cost(self.spec) if self.spec is not None else 0.0)
+
+    __call__ = score
+
+    def rank(self, layouts: Sequence[Layout], k: Optional[int] = None) -> List[Tuple[float, Layout]]:
+        """``[(score, layout)]`` sorted by score then key, the best ``k`` when given."""
+        out = sorted(((self.score(l), l) for l in layouts), key=lambda t: (t[0], t[1].key()))
+        return out if k is None else out[:max(1, int(k))]
+
+    def aggregated(self) -> Tuple[List[Any], np.ndarray, np.ndarray]:
+        """Distinct restaurant nodes, their summed weights and the distance rows (for the k-median)."""
+        agg: Dict[Any, int] = {}
+        nodes: List[Any] = []
+        for v in self.order_nodes:
+            key = tuple(v) if isinstance(v, (list, tuple)) else v
+            if key not in agg:
+                agg[key] = len(nodes)
+                nodes.append(v)
+        if not nodes:
+            return [], np.zeros(0), np.zeros((0, len(self.ids)))
+        w = np.zeros(len(nodes))
+        D = np.zeros((len(nodes), len(self.ids)))
+        for i, v in enumerate(self.order_nodes):
+            key = tuple(v) if isinstance(v, (list, tuple)) else v
+            m = agg[key]
+            w[m] += self.w[i]
+            D[m] = self.D[i]
+        return nodes, w, D
+
+
+def k_median_layout(proxy: ProxyScreen, k: int, option: Tuple[str, int, int] = ("SC", 3, 2),
+                    allowed: Optional[Iterable[str]] = None, time_limit: float = 60.0, threads: int = 1
+                    ) -> Tuple[Optional[Layout], Dict[str, Any]]:
+    """k-median warm start of the exactly-k search (R8): the ``k`` candidates minimising the
+    proxy demand cost of :class:`ProxyScreen` (restaurant nodes aggregated with their summed
+    weights), every site opened as ``option``.  One small MIP (``y_c`` binary, assignment
+    ``x_mc`` continuous, ``sum_c y_c = k``; Gurobi ``Seed 0``, ``OutputFlag 0``); without
+    gurobipy a greedy forward selection on the same objective.  Returns ``(layout, info)`` with
+    ``info`` = ``{method, status, obj, gap, runtime_s}``; ``layout = None`` without candidates."""
+    ids = [l for l in proxy.ids if allowed is None or l in set(allowed)]
+    kk = min(int(k), len(ids))
+    if kk < 1:
+        return None, {"method": None, "status": "no candidates"}
+    nodes, w, D = proxy.aggregated()
+    cols = [proxy.idx[l] for l in ids]
+    info: Dict[str, Any] = {"k": kk, "n_candidates": len(ids), "n_demand_nodes": len(nodes)}
+    chosen: List[str] = []
+    t0 = time.perf_counter()
+    try:
+        import gurobipy as gp
+        from gurobipy import GRB
+        env = gp.Env(empty=True)
+        env.setParam("OutputFlag", 0)
+        env.start()
+        m = gp.Model("k-median", env=env)
+        m.Params.OutputFlag = 0
+        m.Params.Threads = int(threads)
+        m.Params.TimeLimit = float(time_limit)
+        m.Params.Seed = 0
+        y = m.addVars(len(ids), vtype=GRB.BINARY, name="y")
+        m.addConstr(gp.quicksum(y[c] for c in range(len(ids))) == kk, name="k")
+        if len(nodes):
+            x = m.addVars(len(nodes), len(ids), lb=0.0, ub=1.0, name="x")
+            for i in range(len(nodes)):
+                m.addConstr(gp.quicksum(x[i, c] for c in range(len(ids))) == 1, name=f"assign[{i}]")
+                for c in range(len(ids)):
+                    m.addConstr(x[i, c] <= y[c], name=f"open[{i},{c}]")
+            m.setObjective(gp.quicksum(float(w[i]) * float(D[i, cols[c]]) * x[i, c]
+                                       for i in range(len(nodes)) for c in range(len(ids))) * proxy.block_km, GRB.MINIMIZE)
+        m.optimize()
+        if m.SolCount > 0:
+            chosen = [ids[c] for c in range(len(ids)) if y[c].X > 0.5]
+            info.update(method="mip", status=str(m.Status), obj=float(m.ObjVal),
+                        gap=(float(m.MIPGap) if len(nodes) else 0.0))
+        else:
+            info.update(method="mip", status=str(m.Status), obj=None, gap=None)
+        _dispose(m, env)
+    except ImportError:
+        info.update(method="greedy", status="no gurobipy")
+    if not chosen:                               # greedy fallback (or no incumbent)
+        rest = list(ids)
+        while len(chosen) < kk and rest:
+            nxt = min(rest, key=lambda l: (proxy.demand_cost(chosen + [l]), ids.index(l)))
+            chosen.append(nxt)
+            rest.remove(nxt)
+        info.setdefault("method", "greedy")
+        info["obj"] = proxy.demand_cost(chosen)
+    info["runtime_s"] = time.perf_counter() - t0
+    r, B, C = option
+    return Layout.of([(l, r, int(B), int(C)) for l in chosen]), info
+
+
+def dot_first_layout(candidates: Sequence[Candidate], k: int, weights: Dict[str, float],
+                     option: Tuple[str, int, int] = ("SC", 3, 2),
+                     programme_types: Sequence[str] = ("pilot", "shortlist")) -> Optional[Layout]:
+    """DOT-first warm start (R8): the in-region DOT programme sites (``Candidate.dot_type`` in
+    ``programme_types``: the 2024 pilot hubs and the PEC shortlist) ranked by ``weights`` (CSCD
+    demand), filled up to ``k`` with the remaining candidates by the same ranking; ``None`` when
+    no candidate is a programme site."""
+    ids = [c.id for c in candidates]
+    prog = [c.id for c in candidates if c.dot_type in set(programme_types)]
+    if not prog:
+        return None
+    rank = lambda l: (-float(weights.get(l, 0.0) or 0.0), ids.index(l))  # noqa: E731
+    chosen = sorted(prog, key=rank)[:int(k)]
+    for l in sorted((l for l in ids if l not in chosen), key=rank):
+        if len(chosen) >= int(k):
+            break
+        chosen.append(l)
+    r, B, C = option
+    return Layout.of([(l, r, int(B), int(C)) for l in chosen])
+
+
+def top_sites(layout: Layout, weights: Dict[str, float], n: int) -> Layout:
+    """The ``n`` open items of ``layout`` with the largest ``weights`` (a restart seed of the
+    exactly-k search: the best two sites of a rule layout)."""
+    items = sorted(layout.open, key=lambda it: (-float(weights.get(it[0], 0.0) or 0.0), it[0]))[:max(0, int(n))]
+    return Layout.of(items)
 
 
 def dot_pilot_layout(candidates: Sequence[Candidate], option: Tuple[str, int, int] = ("SC", 3, 2),

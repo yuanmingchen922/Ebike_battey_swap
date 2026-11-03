@@ -68,6 +68,7 @@ __all__ = [
     "FAMILY_SPEC_OVERRIDES", "family_spec_overrides", "dot_candidates", "write_candidate_tables",
     "candidate_roles", "scenario_design", "lp_scenario_subset", "SCENARIO_LEVELS", "SCENARIO_DAY_WEIGHTS",
     "candidate_cell", "lattice_cell_of",
+    "MANHATTAN15_FAMILY", "MANHATTAN15_PARAMS",
 ]
 
 #: Facility roles of the planner (design section 2.1): ``S`` swap-only, ``C`` charge-only
@@ -185,14 +186,26 @@ R5_MANHATTAN_PARAMS: Dict[str, Any] = {
 SITING_POST: Dict[str, Dict[str, Any]] = {R5_MANHATTAN_FAMILY: {"energy_calibration": "ebaas", "tariff": "tou"},
                                           MANHATTAN_DOT_FAMILY: {"energy_calibration": "ebaas", "tariff": "tou"}}
 
+#: R8 fifteen-site study (``notes/siting15_design.md`` section 1, critic C4): the ``manhattan_dot``
+#: data (DOT candidates, six entry depots, eBaaS energy, TOU tariff, R5 time profile) with a
+#: city-scale fleet of 48 riders, 8 per entry depot.  The order count is NOT an override:
+#: ``make_nyc_instance`` derives ``n_orders = round(n_bikes x window_h x orders_per_bike_hour)``,
+#: so the stratified levels 1.0 / 1.25 / 1.5 of :func:`scenario_design` give 192 / 240 / 288
+#: orders per evening.  A new family name keeps every ``manhattan_dot`` cache key untouched.
+MANHATTAN15_FAMILY = "manhattan15"
+MANHATTAN15_PARAMS: Dict[str, Any] = {**R5_MANHATTAN_PARAMS, "n_bikes": 48}
+SITING_POST[MANHATTAN15_FAMILY] = dict(SITING_POST[MANHATTAN_DOT_FAMILY])
+
 #: Families :func:`make_base_instance` can build (``family -> make_nyc_instance`` keyword arguments).
 SITING_FAMILIES: Dict[str, Dict[str, Any]] = {STRESS_FAMILY: STRESS_PARAMS, STRESS2_FAMILY: STRESS2_PARAMS,
                                               R5_MANHATTAN_FAMILY: R5_MANHATTAN_PARAMS,
-                                              MANHATTAN_DOT_FAMILY: R5_MANHATTAN_PARAMS}
+                                              MANHATTAN_DOT_FAMILY: R5_MANHATTAN_PARAMS,
+                                              MANHATTAN15_FAMILY: MANHATTAN15_PARAMS}
 #: :class:`SitingSpec` overrides per family applied by :func:`family_spec_overrides` (the CLI
 #: passes them to :func:`spec_from_instance`); the ``manhattan_dot`` family limits transfer
 #: services to pairs within 2 km (design 1.3).  Empty for every older family (unchanged keys).
-FAMILY_SPEC_OVERRIDES: Dict[str, Dict[str, Any]] = {MANHATTAN_DOT_FAMILY: {"max_pair_km": 2.0}}
+FAMILY_SPEC_OVERRIDES: Dict[str, Dict[str, Any]] = {MANHATTAN_DOT_FAMILY: {"max_pair_km": 2.0},
+                                                    MANHATTAN15_FAMILY: {"max_pair_km": 2.0}}
 #: Size menus of the greedy / local search per family (``role -> [(B, C), ...]``).
 SIZE_MENUS: Dict[str, Dict[str, List[Tuple[int, int]]]] = {
     STRESS_FAMILY: {"S": [(1, 0), (2, 0), (3, 0)], "C": [(0, 1), (0, 2)],
@@ -204,6 +217,9 @@ SIZE_MENUS: Dict[str, Dict[str, List[Tuple[int, int]]]] = {
     # reduced menu of the scale-up (design 1.2): SC B in {2,3,4} x C in {1,2}; S B in {2,3}; hubs C in {2,4}
     MANHATTAN_DOT_FAMILY: {"S": [(2, 0), (3, 0)], "C": [(0, 2), (0, 4)],
                            "SC": [(B, C) for C in (1, 2) for B in (2, 3, 4)]},
+    # R8 (15 sites at 48 riders): the reduced SC menu of the scale-up (sizes polished at the end)
+    MANHATTAN15_FAMILY: {"S": [(2, 0), (3, 0)], "C": [(0, 2), (0, 4)],
+                         "SC": [(B, C) for C in (1, 2) for B in (2, 3, 4)]},
 }
 #: Arc-builder pruning of the semi-real instances (``experiments.common.PRUNING_NYC`` values).
 STRESS_PRUNING: Dict[str, Any] = {"tau_max": 4, "start_slack": 6, "reachable": True}
@@ -923,7 +939,7 @@ def family_candidates(family: str, dot_csv: Optional[str] = None, **kw: Any) -> 
     ``manhattan_dot`` (R7), :func:`candidate_sites` (Midtown box) for the round-3/4 families."""
     if family == R5_MANHATTAN_FAMILY:
         return lattice_candidates()
-    if family == MANHATTAN_DOT_FAMILY:
+    if family in (MANHATTAN_DOT_FAMILY, MANHATTAN15_FAMILY):
         return dot_candidates(dot_csv or DOT_CSV_DEFAULT, **kw)[0]
     return candidate_sites()
 
@@ -932,7 +948,7 @@ def family_depots(family: str, candidates: Sequence[Candidate]) -> List[Node]:
     """Rider depots of a siting family: the six bridge / tunnel entry points of
     ``data_nyc.MANHATTAN_ENTRY_POINTS`` for ``r5_manhattan`` and ``manhattan_dot`` (M6), the
     first three candidates (the ``nyc4h`` busiest cells) otherwise (unchanged)."""
-    if family in (R5_MANHATTAN_FAMILY, MANHATTAN_DOT_FAMILY):
+    if family in (R5_MANHATTAN_FAMILY, MANHATTAN_DOT_FAMILY, MANHATTAN15_FAMILY):
         from . import data_nyc as dn
         return dn.entry_point_depots(dn.resolve_region(R5_MANHATTAN_PARAMS["region"]).box)
     return [c.node for c in list(candidates)[:3]]
@@ -941,7 +957,7 @@ def family_depots(family: str, candidates: Sequence[Candidate]) -> List[Node]:
 def family_access_D(family: str) -> Optional[int]:
     """Default access radius [U4] in blocks: :func:`access_radius_blocks` (eBaaS 2 km) for
     ``r5_manhattan`` / ``manhattan_dot``; ``None`` (the experiment's own grid) otherwise."""
-    return access_radius_blocks() if family in (R5_MANHATTAN_FAMILY, MANHATTAN_DOT_FAMILY) else None
+    return access_radius_blocks() if family in (R5_MANHATTAN_FAMILY, MANHATTAN_DOT_FAMILY, MANHATTAN15_FAMILY) else None
 
 
 def family_spec_overrides(family: str) -> Dict[str, Any]:

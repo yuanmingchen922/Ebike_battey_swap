@@ -1,0 +1,20 @@
+# R8 fifteen-site study lanes for deploy/aws/run_lanes.sh -- written by experiments/r8_k15.py --write-lanes
+# plan: notes/siting15_design.md section 12.4; instance r7i.4xlarge at 1.0584 USD/h, dispatcher budget 12 threads, --max-rss-gb 110; 8 worker PROCESSES per rule-follower stage (critic C1), 4 x 3 threads for the ILP check (C6)
+# start on the server (project root, after deploy/aws/sync_up.sh): LANES_DIR=$PWD/ebike_swap_sim/outputs/cloud_lanes_k15 bash deploy/aws/run_lanes.sh start ebike_swap_sim/outputs/cloud_lanes_k15/lanes.txt --max-threads 12
+# chain: instances -> dryrun -> {validate, search} -> final -> report; search waits for dryrun only (the optional ILP check cannot block the study; the thread budget still serialises it behind validate); every command appends to outputs/r8_k15/cost.jsonl (R7_BATCH=k15); re-run 'run_lanes.sh start' after a stop: every stage resumes from cache/
+# --max-rss-gb guards the parent RSS plus workers x the largest worker RSS of the previous cell batch (first batch: parent only); the dry run gates every worker at 4 GB
+# gates: k15_search refuses to start when dryrun.json says escalate (then 64 riders / 320 orders, design 12.2)
+# format: name <TAB> threads <TAB> after <TAB> command (bash, from the package root)
+# total about 6.0 h = 6.4 USD before the 30 % contingency (design 12.4: about 7 h = 7.5 USD)
+# k15_instances: stage instances, about 0.7 h = 0.74 USD
+k15_instances	8	-	R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage instances --workers 8 --max-threads 8 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20
+# k15_dryrun: stage dryrun, about 0.5 h = 0.53 USD
+k15_dryrun	8	k15_instances	R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage dryrun --workers 8 --max-threads 8 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20
+# k15_validate: stage validate, about 1.5 h = 1.59 USD
+k15_validate	12	k15_dryrun	R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage validate --workers 8 --max-threads 12 --validate-workers 4 --validate-threads 3 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20
+# k15_search: stage search, about 2.2 h = 2.33 USD
+k15_search	8	k15_dryrun	R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage search --workers 8 --max-threads 8 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20
+# k15_final: stage final, about 1.0 h = 1.06 USD
+k15_final	8	k15_search	R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage final --workers 8 --max-threads 8 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20
+# k15_report: stage report, about 0.1 h = 0.11 USD
+k15_report	1	k15_final	R7_BATCH=k15 R7_INSTANCE=r7i.4xlarge R7_USD_PER_H=1.0584 python3 experiments/r8_k15.py --stage report --workers 8 --max-threads 1 --out-dir outputs/r8_k15 --family manhattan15 --scenarios 12 --k 15 --k-max 20 --max-rss-gb 110 --approach-radius 14 --start-layout 'D07:SC:B3:C2|D45:SC:B3:C2' --vk 1 2 5 10 15 20

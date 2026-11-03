@@ -1590,3 +1590,286 @@ with tol = 0.
     (cache rows 409-410). No `price_open` record was written, so `budget_result` still shows 718.91.
   * All `oos_result` records are SKIPPED_BUDGET (V_out null). The weekday held-out values were recomputed from the
     cache rows.
+
+## R8 fifteen-site study (2026-10-28)
+
+### L3 map lane: `fig_map15` and the 15-row companion table (2026-10-28)
+
+* Prototype `scratchpad/map15/map15_prototype.py` moved into `paper_itsc/figs/src/make_figs.py` as
+  `fig_map15(layout_json, site_stats_csv)` with the layers of `siting15_design.md` section 6 (NTA land, DOHMH restaurant
+  density, cached OSM major streets, hatched land beyond 14 blocks of every site, unchosen candidates, six entry depots,
+  15 numbered sites with class shapes, marker size = swaps per evening, red ring = DOT programme site, leader lines for
+  close pairs, scale bar, north arrow, legend). Companion table emitter `site_table15` writes `figs/site_table.tex`.
+  No package file was touched. Input contract (layout.json / site_stats.csv schemas) is in `siting15_design.md` 6.1 and
+  in the docstring block above `LAYOUT15_SCHEMA` in `make_figs.py`; the driver lane logs exactly those fields.
+* OSM extract cached as `data/raw/osm_major_roads_manhattan.json` (thinned from the 5.3 MB Overpass answer to 1.1 MB:
+  id, highway, name, rounded geometry; licence and timestamp kept). Credit "streets (c) OpenStreetMap contributors
+  (ODbL)" is printed on the figure and must stay in the caption.
+* Site numbers are derived (south -> north by the along-avenue coordinate), not logged, so map and table always agree.
+* Label placement is automatic (collision-aware greedy; numbers before depot names; close pairs < 300 m get leaders;
+  leaders never cross another marker) because the real layout is unknown until the run.
+* Density ramp lightened (#f4f3f0 -> #c8822f) so the blue markers with their white rings read in greyscale; the earlier
+  #a85c14 end had the same luminance as the marker blue.
+* Table CIs are shown as +- half-widths (the bracketed form was 74 pt too wide for the IEEEtran text width at
+  scriptsize); site names longer than 30 characters are cut with an ellipsis.
+* DEMO: `make_figs.py map15_demo` renders a CSCD-15 rule layout (weights = restaurants within 14 blocks, a stand-in for
+  the scenario demand) with synthetic statistics, stamped DEMO on the map, in the legend title and in the table caption;
+  inputs in `figs/map15_demo/`. The published `figs/fig_map15.*` and `figs/site_table.tex` are that DEMO until the R8
+  driver writes `figs/map15/`. A CSAV-15 variant was rendered to the scratchpad to check a spread layout (0 % uncovered).
+* Render time 1.7 s per map on the laptop; PDF 0.73 MB (density layer rasterised at 300 dpi, streets vector).
+
+### L1 union (bike-class) arc library (lane L1, 2026-10-28)
+
+Implements `notes/siting15_design.md` sections 2-3 as corrected by section 12 (critic C2: reachability in one
+time-ordered bitmask sweep, never a per-class DFS).  E2 equations unchanged; the default path is byte-identical
+(no new key in `DEFAULT_OPTIONS`, no instance JSON, pruning signature or cache key changes; `R7_REPRO=1 ...
+-k reproduced` passes, 149 keys).  Code: `ebike_swap_sim/arcs.py` (new `UnionArcLibrary`, `build_union_arcs`,
+`reach_sweep`, `coreach_sweep`, `library_mode`; `_template_specs` / `_delivery_specs` became list wrappers of
+generators with the same order), `ebike_swap_sim/aggregate.py` (fast path `_init_union`), `ebike_swap_sim/evaluate.py`
+(two guarded lines in `metric_pack`), `tests/test_union_arcs.py` (38 tests).  English only.
+
+Decisions:
+- Switch: arc-builder option `library_mode` (`'per_bike'` default when absent, `'union'`), read by `build_arcs`
+  from `inst.options` or a keyword override (`build_arcs(inst, library_mode='union', **pruning)`); `lib.options`
+  of a union library carries the key so that `ilp`'s co-located rebuild stays in union mode.  The key is NOT in
+  `DEFAULT_OPTIONS` and NOT in `bilevel.pruning_signature`, so older families' keys are untouched; the new
+  `manhattan15` family may set it on its saved scenario instances (then `LowerLevelEvaluator.layout_pair` on the
+  open-sites tier builds union libraries without any change in `bilevel.py`).
+- Storage: the bike-independent template (wait, move, deliver, swap, term specs in the generator's order) as numpy
+  columns (kind int8, src/dst int32 dense state ids `nidx[v]*(H+2)*(L+1) + t*(L+1) + q`, l/u/g int32, d_km/theta
+  float64, order/facility indices int32) emitted block-wise by `_union_columns` (no per-spec Python object), CSR by
+  tail state (template order within a state) for `find` / `out_arcs`.  Bikes with the same `(v0, q0)` form a class
+  (at most depots x levels); per class a rank/select bit vector (`_BitRank`, about 1 MB per million specs) gives
+  the per-bike view; ids are `offset_k + rank_c(spec)`, i.e. IDENTICAL to `build_arcs` ids (bike after bike,
+  template order, unreachable specs skipped under `reachable_pruning`), so schedules, `evaluate.check` / `cost` /
+  `metric_pack`, `portable_schedule`, MIP starts and `costs.check_lib_prices` (`lib._deliv` is a lazy mapping) work
+  unchanged.  `lib.arcs` is a lazy sequence (`len`, `[id]`, iteration).
+- Reachability: `reach_sweep` processes the arcs by tail time level with one `uint64` word per 64 classes
+  (`np.bitwise_or.at`), zero-duration arcs iterated to a fixpoint within a level; equals `_reachable` (DFS) for
+  every class (asserted on every toy option set including a zero-duration fixture and on both families).  Under
+  `reachable_pruning` a light first pass (src/dst/kind only) feeds the sweep and the stored columns keep only the
+  specs reachable by at least one class (16 % at 48 riders; views and ids unchanged because unreachable specs are
+  in no bike's set).  Without pruning all specs are stored (ids need them).
+- Aggregation: `AggregatedNetwork` on a union library builds the same network as on the per-bike library (union
+  order = first-copy-wins over bikes, each in template order; classes closed by construction; co-reachability by
+  `coreach_sweep`; same `ub`, `term_ub`, `n_dropped`, commodities; `arcs` lazy, `arc_ids` ranges).  Gurobi model
+  fingerprints of the aggregated ILP are identical on both families; per-bike ILP (`aggregate=False`) also works
+  (iterates the lazy `lib.arcs`).
+- `evaluate.metric_pack`: the unserved-order index `need[(k, v, t)]` is taken from `lib.delivery_need(...)` when
+  the library has it (vectorised per class) instead of `lib.delivery_arcs(i)` over all bikes; output identical
+  (asserted), 159 s -> 2.8 s at 48 riders.  Per-bike libraries take the old branch.
+
+Measured on the laptop (nice -n 15, Threads 1, numpy 1.26, Python 3.12; `outputs/union_library/*.json` and the
+session scratchpad `union/m_*.json`):
+- reduced-6 `manhattan_dot`, seed 0, 8 riders / 40 orders, two SC:B3:C2 sites, open-sites tier, radius 14: template
+  1.00 M specs, 160 k stored (reachable by some class), 1.22 M per-bike arcs; union build 0.13 s (per-bike 2.4 s),
+  arrays 10 MB (per-bike library about 440 MB RSS); r2 baseline 18 ms, check 4 ms, aggregated network 10 ms
+  (per-bike path 0.9 s), 92,383 aggregated arcs; arcs, schedules, costs, check reports, metric packs and the
+  aggregated model fingerprint identical; a 60 s aggregated solve gives the same incumbent and bound (1178.54 /
+  1098.49).
+- `r5_manhattan`, seed 0, 8 riders, M08:SC:2:1 on the open-sites tier: 1.12 M template specs, 184 k stored, 1.43 M
+  per-bike arcs; union 0.14 s vs per-bike 2.9 s; identical as above.
+- reduced-6 `manhattan_dot` at 48 riders / 240 orders (instance 376 nodes, 141 k routes, built once in 269 s and
+  saved per critic C3): 15.8 M template specs, 2.46 M stored, 109 M virtual per-bike arcs, 28 classes; union build
+  3.3-3.4 s (light pass 1.1, sweep 0.8, compacted pass 1.0, index 0.4, gbar 0.1), arrays 142 MB, process RSS
+  +0.3 GB for a second build (+0.95 GB for the first, allocator cache included), peak process RSS 1.3-1.5 GB with
+  the instance; r2 baseline 0.09 s (198 of 240 orders unserved under this two-site layout), check 0.02 s,
+  metric_pack 2.8 s; cell = 3.5 s on the laptop, i.e. about 9 s with the 2.5x server factor, under the 45 s / 4 GB
+  gates.  The per-bike library for this cell would hold 109 M `Arc` objects (about 25 GB) and was not built.
+- synthetic 48-rider toy grid (`usd4h` knobs, 240 orders, 26 nodes): 726 k specs, 34.7 M virtual arcs, build 0.3 s,
+  cell 0.4 s, peak RSS 248 MB; the 8-rider slice has the same template and identical per-bike views.
+
+Open points for lane L2 (driver): the union library is read-only after the build and must be built inside each
+worker process (fork after the scenario instances are loaded; never pickle a library); `lib.arcs_of(k)`,
+`lib.arcs` iteration and `lib.delivery_arcs(i)` with `k=None` materialise `Arc` objects lazily (O(bikes x specs)),
+so avoid them in cells; the all-candidates template tier (`evaluator.template(s)`, `subset_library`) works through
+the generic interface but is slow on a union template and stays out of the k15 stage (critic C5).
+
+### L2 driver lane: `experiments/r8_k15.py`, exactly-k search, per-site metrics (lane L2, 2026-10-28)
+
+Implements `notes/siting15_design.md` sections 3-6 as corrected by section 12 (C1 process pool, C2 union library,
+C3 instances built once and saved, C4 `n_bikes` gives the orders, C5 open-sites tier only with the 45 s / 4 GB /
+3-swaps gates, C6 ratio-with-gaps validation).  E2 equations unchanged; no cache key, pruning signature or pool
+signature of an older family changes (`R7_REPRO=1 pytest tests/test_r7_siting.py -k reproduced` passes; the full
+suite is green).  English only.  Code: `ebike_swap_sim/sites_nyc.py` (family `manhattan15`), `ebike_swap_sim/evaluate.py`
+(`site_metrics`, `metric_pack['per_site']`), `ebike_swap_sim/bilevel.py` (`SERVICE_GATE` / `service_gate`,
+`ProxyScreen`, `greedy_local_search(force_k, swap_neighbourhood, min_served_share=None)`, `k_median_layout`,
+`dot_first_layout`, `top_sites`, `LowerLevelEvaluator.store_external_row`, the `prefetch` hook), `experiments/common.py`
+(`unservable_orders` reads the id index), `experiments/r8_k15.py` (new driver), `tests/test_r8_k15.py` (11 tests + one
+`R8_HEAVY=1` probe).
+
+Decisions:
+- Family `manhattan15` = the `manhattan_dot` data (DOT candidates, six entry depots, eBaaS energy, TOU tariff, R5
+  profile, `max_pair_km` 2 km, reduced SC menu) with `n_bikes = 48`; the stratified levels 1.0 / 1.25 / 1.5 give
+  192 / 240 / 288 orders (C4).  A new family name, so every `manhattan_dot` key is untouched.
+- Stage `instances` builds the 12 in-sample + 12 held-out scenario instances (and the 16-rider validation
+  instances) once, one process per scenario, with `Instance.save` (route library included) plus a pickle twin for
+  fast worker loads; `options['library_mode'] = 'union'` is set on the saved instances (L1's switch), a manifest
+  with per-file signatures makes the stage resumable (C3).
+- Process pool (C1): `multiprocessing` (fork where available, spawn-safe) with persistent workers that load the
+  saved scenario instance from disk on first use (LRU of 2), build the layout instance and its union library,
+  run the r2 rule follower through `LowerLevelEvaluator.evaluate_scenario` on a SINGLE-scenario evaluator,
+  certify with `evaluate.check`, measure `site_metrics`, and return one small dict plus the portable schedule.
+  The parent holds LIGHT instances (routes stripped) in an `OfflineEvaluator` that never solves: it computes the
+  cache keys (identical to the worker's single-scenario key, asserted on every row), stores the rows with
+  `store_external_row` (`cache/index.jsonl` + `schedules/`), and `greedy_local_search` reads them as cache hits
+  after a `prefetch` of every screened layout (one pool batch per search step).  Resume = the cache.
+- Exactly-k mode `force_k`: forward selection accepts the lowest-V addition at every step even when V rises
+  (the greedy path gives V(k)); add / drop are disabled in the local search; the per-policy service gate is 0 for
+  the simulator (served share reported on every record), 0.5 for the ILP as before; the swap neighbourhood is the
+  3 nearest closed candidates of a site plus the 5 best closed candidates by the proxy; 3 layouts priced per
+  step.  The proxy is library-free (p-weighted order penalty x grid distance from the restaurant to the nearest
+  open swap-capable site + allocated set-up; milliseconds); the lower level alone decides acceptance.
+- Warm starts / comparison rows: CSCD-k, CSTC-k (inverse-distance access weights, no isolation pricings), CSAV-k,
+  k-median-k (one small MIP on the proxy objective; greedy fallback without gurobipy), DOT-first-k (pilot +
+  shortlist sites by demand, filled by CSCD); restarts from the m = 2 production incumbent, from the best two
+  sites (by demand weight) of CSCD-k and CSAV-k, and from empty; 'k units free' = the same search without
+  `force_k` on the full menu; size polish at the best locations and fixed investment (D'Hondt by swaps per site
+  within the menu, then one-for-one spare / charger transfers from the least to the most used sites); the V(k)
+  path continued to k = 20 from the best found; k = 1 is the best proxy-screened singleton of the empty restart,
+  and the production m = 1 / m = 2 incumbents (D23; D07 + D45) are re-priced at the new fleet as reference rows
+  (12.2: every V(k) point at the same fleet and follower).
+- Final stage: every layout on 12 in-sample + 12 held-out scenarios, stratified 95 % CIs (`bilevel.stratified_ci`
+  on the per-scenario opex; paired regret against the best), the remove-one pass (marginal value = V without the
+  site - V with it, positive = the site saves money, paired CI), per-site statistics p-weighted over the
+  in-sample scenarios (swaps with CI, orders within 7 blocks = 1 km served / total, distinct riders, charger-busy
+  and idle shares over 15-min periods, kWh bought, mean wait, stock-out slots); outputs `layout.json` (schema
+  `map15.layout/1`) and `site_stats.csv` (exactly `SITE_STATS15_COLUMNS`) next to the records = the `fig_map15`
+  input contract (section 6.1); `RESULTS.md` with the paper tables.
+- Dry run (stage `dryrun`): CSCD-k on all in-sample scenarios; gates cell <= 45 s, worker RSS <= 4 GB, median
+  open site >= 3 swaps per evening -> `dryrun.json` with `escalate`; the search refuses to start on a failed gate
+  (`--ignore-gates` overrides); the escalation (64 riders / 320 orders) is a decision for the author, not automatic.
+- Validation (stage `validate`, C6): 16 riders / 80 orders (level 1.25, seeds 0-2), 5-site layouts (the greedy
+  best at that fleet under the rule follower, CSCD-5, CSAV-5), exact aggregated ILP at 1,800 s / Threads 3 in 4
+  worker processes, reported as rule / incumbent ratio per cell with the MIP gap and status; no rank statistic.
+- Lanes: `--write-lanes` -> `outputs/cloud_lanes_k15/lanes.txt` (+ `.json`), one chain instances -> dryrun ->
+  validate -> search -> final -> report, 8 worker processes (8 threads declared), 4 x 3 threads for the ILP
+  check, `--max-threads 12`, `--max-rss-gb 110`, `R7_BATCH=k15` and the instance price on every command
+  (`cost.jsonl`); about 6 h = 6.4 USD before contingency (design 12.4: about 7 h = 7.5 USD).  Accepted by
+  `deploy/aws/run_lanes.sh start --dry-run`.
+- Fix found by the probe: `common.unservable_orders` materialised `lib.delivery_arcs(i)` over every bike (160 M
+  virtual arcs at 48 riders x 15 sites: 190 s per cell); it now reads the id index `lib._deliv` (same emptiness
+  test on both library kinds, asserted in the tests): the cell is 3 s.
+
+Measured on the laptop (nice -n 15, Threads 1):
+- toy smoke of every stage (`--smoke --stage all`, 4 candidates, k = 2, 2 + 2 scenarios, 2 worker processes):
+  1.5-2.2 s wall, 74 cells, 0.07 GB per worker; the exactly-k search reaches the exhaustive optimum at k = 1, 2, 3
+  with and without the proxy screen; the k-median equals the enumerated proxy minimum; `tests/test_r8_k15.py`
+  11 passed in 9 s.
+- one real cell (`manhattan15` scenario 0, 48 riders / 192 orders, CSCD-15 at SC:B3:C2, open-sites tier, radius
+  14): instance build 219-240 s (343 nodes, 117 k routes, 15.5 MB JSON), union library 2.75 s (13.4 M template
+  specs, 3.39 M stored, 160.9 M virtual arcs, 192 MB), rule follower + check + cost + metrics 0.24 s, cell 3.0 s
+  end to end in the worker, worker RSS 1.07-1.36 GB; served 0.89, 50 swaps at the 15 sites (1-7 each, median 3
+  on this level-1.0 scenario).  With the 2.5x server factor: about 8 s per cell, far under the 45 s gate; the
+  median-swaps gate is the one the server dry run decides.
+- full test suite: green (`tests/` in four chunks of 2.7-5.9 min; `test_r7_siting.py` 49 passed; `R7_REPRO=1 -k
+  reproduced` passed).
+
+Open points for the author: the AWS run itself (user starts the instance; about 7 h = 7.5 USD on the r7i.4xlarge,
+November unless decided otherwise); the 48/240 vs 64/320 decision after the dry run; the paper lane copies
+`layout.json` + `site_stats.csv` to `paper_itsc/figs/map15/` and runs `make_figs.py map15`.
+
+### R8 fixer pass after the two reviews (2026-10-28)
+
+Reviews: (a) library + follower reviewer (one major, six minor), (b) end-to-end and cost reviewer (seven minor).
+Every blocker/major and every cheap minor was applied; nothing was skipped. E2 equations, cache keys, pruning
+and pool signatures of the older families are untouched (the changes are in the R8 driver, the per-site metric
+rows, one `_BitRank` guard and one `_prefetch` call).
+
+Major (a1), `bilevel.greedy_local_search`: the `start` layout was priced without `_prefetch(evaluator, [start])`,
+so on the driver's `OfflineEvaluator` (never solves in the parent) the start became an ERROR row and every restart
+from a layout (m2 incumbent D07|D45, CSCD_best2, CSAV_best2, the "k units free" search, the validate-stage greedy)
+silently collapsed into the singleton search from empty. Fix: `_prefetch` before `price(start)`; `stage_search`
+prices every restart's start in one pool batch (`tag="starts"`) before the loop, records `start_status` per
+restart and REFUSES (SystemExit, `search_blocked` record) a restart whose start step is ERROR instead of
+continuing from empty. The smoke now exercises the path: smoke mode gets a two-site start (`T1|T4`) and two toy
+reference layouts, and the test asserts the start step is OK for every restart and that no restart ever reads an
+ERROR start. New test `test_restart_from_an_unpriced_start_is_ok_on_the_offline_evaluator` (an OfflineEvaluator
+whose pricer stores single-scenario rows, as the pool does).
+
+Minor, applied:
+- `arcs._BitRank.rank(n)` / `test(n)`: guarded at `i >= n` (`rank(n)` = the count; before, `n` a multiple of 64
+  indexed one word past the end, reachable through `_LazyIds` when the deliver block is the last stored block).
+  Test extended with n = 64, 128.
+- One in-memory cache per process: `ev_search`, `ev_out` and the validate-stage `ev_val` share `ctx.ev.cache`
+  (keys differ by seed / demand hash where the scenarios differ), so a cell priced by the search is a hit for the
+  final / remove-one stages and `index.jsonl` carries no duplicate rows (smoke: 74 rows, 46 distinct before; now
+  every key once, asserted by the smoke test).
+- `polish_sizes`: `if sw and (len(Bs) > 1 or len(Cs) > 1)` (the `and`/`or` precedence ran the D'Hondt step on an
+  empty per-site table); an empty table is logged as a skipped D'Hondt step.
+- `evaluate.site_metrics`: open charge-only hubs (role C) are rows too (swaps 0, riders 0), so the kWh per site
+  sums to `kwh_purchased` for every layout; the R8 search is SC-only, so no R8 number changes. New test with a
+  `T4:C:B0:C1` hub under the r2 follower and the exact ILP (Gurobi), kWh sum and swap sum asserted.
+- Worker instance reloads: cells of a batch are now sent scenario-major with a chunk of consecutive jobs per
+  worker (`chunksize = min(n_layouts, n_jobs // (4 x workers), 8)`), so a worker's LRU (`--worker-keep 2`) is hit
+  by the next job; the instance-load time is logged per cell (`instance_load_s`, inside `cell_wall_s`, so the
+  45 s gate still sees it) and per batch (`instance_load_s_sum`, `instance_loads`).
+- 48-rider feasibility of the single sites and the pair (unverified in the review): the dry run now prices the
+  reference layouts D23, D07|D45, D07, D45 and the search start on all 12 in-sample scenarios in one extra batch
+  (`dryrun_refs`), echoes one `dryrun_ref` record each and stores them in `dryrun.json["reference_layouts"]`
+  (status, V, served share, per-scenario statuses), so an INFEASIBLE_TERMINAL singleton is known before the
+  search is paid for. `stage_search` already continues with the restarts that reached k; it now also emits
+  `vk_missing` (the k values with no usable layout) and stores it in `search_summary.json` instead of leaving
+  the gap silent; it still stops only when no restart reached k.
+- Lanes: `outputs/cloud_lanes_k15/lanes.txt` + `lanes.json` are written to the repository path (they existed only
+  in a test tmp dir); `k15_search` now waits for `k15_dryrun` only (the optional ILP check cannot block the study;
+  the 12-thread budget still serialises it behind validate); accepted by `run_lanes.sh start --max-threads 12
+  --dry-run`.
+- `main --max-threads`: `need = max(workers if a pool stage, validate_workers x validate_threads if validate, 0)`
+  (the old expression dropped the validate term whenever a pool stage was also requested).
+- `--max-rss-gb` is now a machine budget: parent RSS + workers x the largest worker RSS of the previous cell
+  batch (first batch: parent only); the lanes header says so, the help text too.
+- Design note section 8: the 15-site row of tab:bounds is "best found, no bound (rule follower)" unless the
+  optional LP lane runs; the page budget uses the built map size (7.2 x 2.74 in after the tight bounding box of
+  the 7.16 x 2.7 in figure; width is scaled by `\figfile`, the height is +0.2 in against the first estimate).
+- `make_figs.py --help` / an unknown name prints the figure names and exits 2 (KeyError before).
+
+Not changed (by design): the per-worker `keep` stays 2 (12 x 0.5 GB per worker would break the 4 GB gate; the
+scenario-major chunks are the fix); no LP lane added.
+
+Checks on the laptop (nice -n 15, Threads 1): `make_figs.py map15_demo` renders fig_map15 + site_table.tex in
+1.7 s; toy smoke `--smoke --stage all` rc 0 with the m2 restart, reference layouts and duplicate-free cache.
+Verification pass of the fixer (2026-10-28, laptop, nice -n 15, Gurobi Threads 1, every run under 10 min): each fix
+re-checked in the code; full suite green file by file (27 files, 0 failures, skips only the opt-in heavy/repro tests;
+longest file test_r7_siting 240 s); `R7_REPRO=1 pytest tests/test_r7_siting.py -k reproduced` passed (53 s);
+`tests/test_r8_k15.py` 13 passed, 1 skipped (`R8_HEAVY`); toy smoke `--smoke --stage all` rc 0 in 2.2 s, 225 MB RSS,
+cache/index.jsonl 50 rows = 50 distinct keys, every restart's start step OK (m2_incumbent, CSCD_best2, CSAV_best2,
+free, extend, validate_greedy), `vk_missing` empty, four dry-run reference layouts OK; a second invocation skipped
+five stages and added no cache row; `make_figs.py map15_demo` 2.0 s, site_table.tex byte-identical; `make_figs.py
+--help` exits 2 with the figure list; `run_lanes.sh start --max-threads 12 --dry-run` accepts the six lanes
+(k15_search after k15_dryrun). Note: `--write-lanes` always writes `outputs/cloud_lanes_k15/` and bakes `--out-dir`
+into the commands, so regenerate it without `--out-dir` (as now on disk: `--out-dir outputs/r8_k15`).
+
+### R8 gate before the server run (2026-10-28)
+
+Gate of `siting15_design.md` section 13 (full record there). Laptop only (nice -n 15, Gurobi Threads 1, every run
+under 10 min, RSS under 8 GB); nothing uploaded, the instance not touched; no package, experiment or test file changed.
+
+Checks:
+- Full suite, one pytest process per file (27 files): 535 collected = 527 passed, 8 skipped (opt-in: six r6_fill solver
+  smokes, `R8_HEAVY`, `R7_REPRO`), 0 failed, 0 errors. `R7_REPRO=1 pytest tests/test_r7_siting.py -k reproduced`:
+  1 passed (56 s, 149 keys), so the older families' cache keys, pruning and pool signatures are unchanged.
+- Lane plan `outputs/cloud_lanes_k15/lanes.txt` / `lanes.json` regenerated with `--write-lanes` into a scratch dir and
+  diffed: identical apart from the scratch path line; `run_lanes.sh start ... --max-threads 12 --dry-run` on the
+  unzipped copy accepts the six lanes (only `k15_instances` starts, the rest queue in the chain).
+
+Decisions:
+- New `deploy/aws/r8_prod_check.sh` (separate from `r7_prod_check.sh`, which stays byte-identical): 47 fixed-string
+  markers of L1 / L2 / the fixer pass, 4 negative markers (critic C1: no `ThreadPoolExecutor`; C5: no `.template(`,
+  `superset_bound`, `subset_library` in the driver), lane-plan checks (six lanes in order, `k15_search` after
+  `k15_dryrun`, `manhattan15`, `R7_BATCH=k15`, `--workers 8`, `--out-dir outputs/r8_k15`, no `--n-bikes` /
+  `--n-orders` (C4) / `--ignore-gates`), refusal while a `lanes_dispatch` tmux session runs (the session name is
+  shared by every lane plan), optional `--smoke` (toy run of every stage with `env.sh` sourced). Exit 0 / 2 / 3 / 4;
+  exits 0 and 2 (missing marker, forbidden thread pool, `--n-bikes` in the lanes) were exercised on an unzipped copy.
+- `ebike_swap_sim/outputs/r8_upload/r8_code.zip`: 109 files, 1,303,490 bytes, md5 `ab8cca8a5f45166112877cd0897ba188`;
+  same selection rule as `r7_code.zip` with the k15 lane plan instead of the R7 lane plans; md5-identical to the tree,
+  0 CJK, no secret pattern, modes kept. No new data file: the instances are built on the server from the R7 data
+  already there; the OSM extract is used only by `make_figs.py` on the laptop and is not shipped.
+- Measured the largest scenario before costing (scratch probe, not a project file): level 1.5 weekend, 288 orders,
+  450 nodes, 202 k routes, build 414 s laptop (17 min server at 2.5x), cells 6.7-7.9 s laptop (CSCD-15, CSAV-15,
+  CSCD-20), worker RSS 1.7-2.1 GB, median open-site swaps 3 (the gate is at its threshold; served share 0.53-0.70).
+- Corrected server estimate: 4.3-5.0 h + 30 % = about 5.5-6.5 h = 6-7 USD on the r7i.4xlarge on-demand (4-4.5 USD
+  without the optional ILP check, `--only` without `k15_validate`); escalation to 64 / 320 adds 3-4.5 USD. Replaces
+  the 7 h / 7.5 USD of design 12.4 and the lane plan's 6.0 h before contingency. Lanes run serially under the 12-thread
+  budget, so the wall time is the sum of the stages. Spend goes to November unless the author decides otherwise.
+- Server commands (unzip, pre-flight, start, status, cost) are in design section 13.6. Gate result: PASS.
