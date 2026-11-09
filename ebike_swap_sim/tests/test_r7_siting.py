@@ -405,9 +405,12 @@ def test_ci_helpers_match_hand_computation():
     sd = np.std(d, ddof=1)
     assert abs(plain["half"] - BL._t975(3) * sd / 2.0) < 1e-9
     strat = BL.stratified_ci(d, ["a", "a", "b", "b"], [0.25, 0.25, 0.25, 0.25])
-    # W_a = W_b = 0.5; means 2 and 4; s2_a = 2, s2_b = 8; var = 0.25*2/2 + 0.25*8/2 = 1.25; df 2
-    assert abs(strat["mean"] - 3.0) < 1e-12 and strat["df"] == 2
-    assert abs(strat["half"] - BL._t975(2) * np.sqrt(1.25)) < 1e-9
+    # W_a = W_b = 0.5; means 2 and 4; s2_a = 2, s2_b = 8; v_a = 0.25*2/2 = 0.25, v_b = 0.25*8/2 = 1.0;
+    # var = 1.25; df_sum = 2; Welch df = 1.25^2 / (0.25^2/1 + 1.0^2/1) = 1.5625 / 1.0625
+    assert abs(strat["mean"] - 3.0) < 1e-12 and strat["df_sum"] == 2
+    assert abs(strat["df"] - 1.5625 / 1.0625) < 1e-12
+    assert abs(strat["half"] - BL._t975(1.5625 / 1.0625) * np.sqrt(1.25)) < 1e-9
+    assert abs(strat["half_df_sum"] - BL._t975(2) * np.sqrt(1.25)) < 1e-9
 
 
 # ---------------------------------------------------------------------------

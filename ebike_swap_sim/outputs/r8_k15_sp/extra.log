@@ -1,0 +1,35 @@
+{"kind": "cell_batch", "tag": "extra_in", "n_cells": 6, "wall_s": 21.30293556900142}
+{"kind": "price15", "tag": "extra_in", "name": "best", "layout_key": "D05:SC:B4:C2|D07:SC:B4:C2|D09:SC:B4:C2|D12:SC:B4:C2|D18:SC:B4:C2|D23:SC:B2:C2|D28:SC:B2:C2|D34:SC:B2:C2|D35:SC:B4:C2|D38:SC:B4:C2|D41:SC:B2:C2|D48:SC:B2:C2|D49:SC:B2:C2|D50:SC:B3:C2|D55:SC:B2:C2", "V": 8642.06643121693, "served_share": 0.8817398313492064, "status": "OK", "k": 15}
+{"kind": "price15", "tag": "extra_in", "name": "polish_r4_2", "layout_key": "D05:SC:B4:C2|D07:SC:B4:C2|D09:SC:B4:C2|D12:SC:B4:C2|D18:SC:B3:C2|D23:SC:B3:C2|D28:SC:B2:C2|D34:SC:B2:C2|D35:SC:B4:C2|D38:SC:B4:C2|D41:SC:B2:C2|D48:SC:B2:C2|D49:SC:B2:C2|D50:SC:B3:C2|D55:SC:B2:C2", "V": 8600.359068783067, "served_share": 0.881907242063492, "status": "OK", "k": 15}
+{"kind": "cell_batch", "tag": "extra_out", "n_cells": 12, "wall_s": 28.591284182999516}
+{"kind": "price15", "tag": "extra_out", "name": "best", "layout_key": "D05:SC:B4:C2|D07:SC:B4:C2|D09:SC:B4:C2|D12:SC:B4:C2|D18:SC:B4:C2|D23:SC:B2:C2|D28:SC:B2:C2|D34:SC:B2:C2|D35:SC:B4:C2|D38:SC:B4:C2|D41:SC:B2:C2|D48:SC:B2:C2|D49:SC:B2:C2|D50:SC:B3:C2|D55:SC:B2:C2", "V": 8977.909366402117, "served_share": 0.8599826388888889, "status": "OK", "k": 15}
+{"kind": "price15", "tag": "extra_out", "name": "polish_r4_2", "layout_key": "D05:SC:B4:C2|D07:SC:B4:C2|D09:SC:B4:C2|D12:SC:B4:C2|D18:SC:B3:C2|D23:SC:B3:C2|D28:SC:B2:C2|D34:SC:B2:C2|D35:SC:B4:C2|D38:SC:B4:C2|D41:SC:B2:C2|D48:SC:B2:C2|D49:SC:B2:C2|D50:SC:B3:C2|D55:SC:B2:C2", "V": 9028.86375925926, "served_share": 0.8590711805555555, "status": "OK", "k": 15}
+{"kind": "extra_result"}
+{
+ "best": {
+  "layout_key": "D05:SC:B4:C2|D07:SC:B4:C2|D09:SC:B4:C2|D12:SC:B4:C2|D18:SC:B4:C2|D23:SC:B2:C2|D28:SC:B2:C2|D34:SC:B2:C2|D35:SC:B4:C2|D38:SC:B4:C2|D41:SC:B2:C2|D48:SC:B2:C2|D49:SC:B2:C2|D50:SC:B3:C2|D55:SC:B2:C2",
+  "V_in": 8642.06643121693,
+  "served_in": 0.8817398313492064,
+  "complete_in": true,
+  "V_out": 8977.909366402117,
+  "served_out": 0.8599826388888889
+ },
+ "polish_r4_2": {
+  "layout_key": "D05:SC:B4:C2|D07:SC:B4:C2|D09:SC:B4:C2|D12:SC:B4:C2|D18:SC:B3:C2|D23:SC:B3:C2|D28:SC:B2:C2|D34:SC:B2:C2|D35:SC:B4:C2|D38:SC:B4:C2|D41:SC:B2:C2|D48:SC:B2:C2|D49:SC:B2:C2|D50:SC:B3:C2|D55:SC:B2:C2",
+  "V_in": 8600.359068783067,
+  "served_in": 0.881907242063492,
+  "complete_in": true,
+  "V_out": 9028.86375925926,
+  "served_out": 0.8590711805555555,
+  "vs_best_in": {
+   "mean": -41.70736243386273,
+   "half": 127.55219532303684,
+   "df": 2.7612638668249194
+  },
+  "vs_best_out": {
+   "mean": 50.95439285714383,
+   "half": 138.93687643983503,
+   "df": 2.526165797684845
+  }
+ }
+}

@@ -1,0 +1,20 @@
+# R14 (2026-11-05) completion run, held-out (seeds 100-111; the cache already holds the weekday seeds of the first four
+# and all 12 of the three hub layouts of 2026-11-04).  Every row of Table tab:regret and its reference layouts.
+D23:SC:B3:C2
+D07:SC:B3:C2|D45:SC:B3:C2
+D12:SC:B3:C2|D18:SC:B3:C2
+D18:SC:B3:C2|D19:SC:B3:C2
+D18:SC:B3:C2
+D23:SC:B3:C2|D45:SC:B3:C2
+D24:S:B3:C0|D45:SC:B3:C2
+D30:SC:B3:C2|D58:SC:B3:C2
+D07:S:B3:C0|D50:C:B0:C4
+D07:S:B3:C0|D34:C:B0:C4
+D18:SC:B3:C2|D19:SC:B3:C2|D23:SC:B3:C2
+D07:SC:B4:C2|D45:SC:B4:C2
+D23:SC:B4:C2|D45:SC:B4:C2
+D07:S:B3:C0|D11:C:B0:C4
+D07:SC:B3:C2|D11:C:B0:C4
+D07:SC:B3:C2|D13:C:B0:C4
+D45:S:B3:C0|D47:C:B0:C4
+D45:SC:B3:C2|D47:C:B0:C4

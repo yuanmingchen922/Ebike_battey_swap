@@ -2874,10 +2874,11 @@ def dot_pilot_layout(candidates: Sequence[Candidate], option: Tuple[str, int, in
     return Layout.of([(l, r, int(B), int(C)) for l in locs])
 
 
-def _t975(df: int) -> float:
+def _t975(df: float) -> float:
+    """t_{0.975} with ``df`` degrees of freedom (fractional df allowed, as Welch-Satterthwaite gives)."""
     try:
         from scipy import stats
-        return float(stats.t.ppf(0.975, int(df)))
+        return float(stats.t.ppf(0.975, float(df)))
     except Exception:  # noqa: BLE001
         return {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262,
                 10: 2.228, 11: 2.201}.get(int(df), 1.96)
@@ -2902,14 +2903,20 @@ def paired_ci(diffs: Sequence[float], p: Optional[Sequence[float]] = None) -> Di
 def stratified_ci(diffs: Sequence[float], strata: Sequence[Any], p: Sequence[float]) -> Dict[str, Any]:
     """Stratified paired estimator (design 2.7): per stratum ``h`` the mean difference over its
     scenarios and the within-stratum variance (``n_h - 1`` df); the estimate is
-    ``sum_h W_h mean_h`` with ``W_h = sum of p_s in h``, its variance ``sum_h W_h^2 s_h^2 / n_h``
-    and the df ``sum_h (n_h - 1)``.  Strata with one scenario contribute no variance (noted)."""
+    ``sum_h W_h mean_h`` with ``W_h = sum of p_s in h`` and its variance ``sum_h v_h`` with
+    ``v_h = W_h^2 s_h^2 / n_h``.  The df are the Welch-Satterthwaite approximation
+    ``(sum_h v_h)^2 / sum_h v_h^2 / (n_h - 1)`` (review of 2026-11-04: the former
+    ``sum_h (n_h - 1)``, kept as ``df_sum``, is the pooled-variance df and overstates the
+    precision when the strata differ in variance; ``half_df_sum`` is the former half-width).
+    Strata with one scenario contribute no variance (noted).  With zero estimated variance the
+    half-width is 0 and ``df`` falls back to ``df_sum``."""
     groups: Dict[Any, List[Tuple[float, float]]] = {}
     for d, h, ps in zip(diffs, strata, p):
         groups.setdefault(h, []).append((float(d), float(ps)))
     est = 0.0
     var = 0.0
-    df = 0
+    df_sum = 0
+    welch_den = 0.0
     single = []
     for h, rows in groups.items():
         W = sum(ps for _d, ps in rows)
@@ -2918,9 +2925,14 @@ def stratified_ci(diffs: Sequence[float], strata: Sequence[Any], p: Sequence[flo
         est += W * m_h
         if n_h >= 2:
             s2 = sum((d - m_h) ** 2 for d, _ps in rows) / (n_h - 1)
-            var += W * W * s2 / n_h
-            df += n_h - 1
+            v_h = W * W * s2 / n_h
+            var += v_h
+            welch_den += v_h * v_h / (n_h - 1)
+            df_sum += n_h - 1
         else:
             single.append(h)
-    half = (_t975(df) * math.sqrt(var)) if df >= 1 else None
-    return {"mean": est, "half": half, "df": df, "n": len(diffs), "n_strata": len(groups), "single_strata": single}
+    df = (var * var / welch_den) if welch_den > 0 else float(df_sum)
+    half = (_t975(df) * math.sqrt(var)) if df_sum >= 1 else None
+    half_sum = (_t975(df_sum) * math.sqrt(var)) if df_sum >= 1 else None
+    return {"mean": est, "half": half, "df": df, "df_sum": df_sum, "half_df_sum": half_sum,
+            "n": len(diffs), "n_strata": len(groups), "single_strata": single}

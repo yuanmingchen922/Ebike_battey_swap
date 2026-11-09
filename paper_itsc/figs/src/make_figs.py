@@ -301,7 +301,7 @@ def fig_map():
         "Best pair: 717 USD/day (34 % less)",
         "All-DOT pair: +3 USD/day (a tie)",
         "Spread-rule pair: +92 USD/day",
-        "DOT 2024 pilot hubs (pair):\n+134 USD/day",
+        "DOT 2024 pilot pair:\n+134 USD/day",
     ]
     lax.legend(h, lab, loc="center left", bbox_to_anchor=(0.0, 0.5), frameon=False, handlelength=2.3,
                handletextpad=0.6, labelspacing=0.7, borderaxespad=0.0, fontsize=8)
@@ -661,7 +661,7 @@ ENTRY_POINTS = (("Queensboro Bridge", 40.7610, -73.9640), ("Williamsburg Bridge"
                 ("Lincoln Tunnel", 40.7585, -73.9955), ("Holland Tunnel", 40.7240, -74.0065))
 CLASS_MARK = {"shortlist": "s", "pilot": "o", "installed": "p", "citibike_charging": "^", "depot": "h",
               "other": "X", "lattice": "D"}
-CLASS_LABEL = {"shortlist": "DOT PEC proposed site", "pilot": "DOT 2024 pilot hub", "installed": "installed cabinet",
+CLASS_LABEL = {"shortlist": "DOT PEC proposed site", "pilot": "DOT 2024 pilot site", "installed": "installed cabinet",
                "citibike_charging": "Citi Bike charging dock", "depot": "operator depot", "other": "other planned site",
                "lattice": "grid cell, no address"}
 CLASS_SHORT = {"shortlist": "PEC", "pilot": "pilot", "installed": "cabinet", "citibike_charging": "dock",
@@ -693,13 +693,13 @@ SITE15 = {
     'D09': ('Grid cell, Bowery & Division St', 'Chinatown', '[M04]'),
     'D10': ('Grand St Citi Bike dock', 'Lower East Side', '[D005]'),
     'D11': ('Kenmare St Citi Bike dock', 'Little Italy', '[D007]'),
-    'D12': ('Essex Market pilot hub', 'Lower East Side', '[D006]'),
+    'D12': ('Essex Market pilot site', 'Lower East Side', '[D006]'),
     'D13': ('JOCO hub, Bowery', 'Lower East Side', '[D009]'),
     'D14': ('DOT Site 39, 1st Ave & E 1st St', 'East Village', '[D010]'),
     'D15': ('Swobbee site, Charles St (planned)', 'West Village', '[D019]'),
     'D16': ('Whizz store, W 13th St', 'West Village', '[D020]'),
     'D17': ('Grid cell', 'Chelsea', '[M05]'),
-    'D18': ('Cooper Square pilot hub', 'East Village', '[D014]'),
+    'D18': ('Cooper Square pilot site', 'East Village', '[D014]'),
     'D19': ('DOT Site 38, 1st Ave & E 5th St', 'East Village', '[D013]'),
     'D20': ('Movin store, Avenue B', 'East Village', '[D011]'),
     'D21': ('Avenue D Citi Bike dock', 'East Village', '[D008]'),
@@ -1281,7 +1281,7 @@ def fig_map15(layout_json=None, site_stats_csv=None, name="fig_map15", table_nam
           Line2D([], [], marker="o", ls="none", ms=2.4, mfc=CONTEXT, mec="none"),
           Patch(fc=DENS_RAMP[3], ec="none")]
     lab += [f"land beyond 14 blocks of all sites ({_share_pct(uncovered_share)})",
-            "rider entry point (bridge or tunnel)", f"other candidate site ({len(others)}, not chosen)",
+            "rider entry point (bridge or tunnel portal)", f"other candidate site ({len(others)}, not chosen)",
             "restaurant density (darker = more)"]
     title = lay.get("label") or f"{n} sites"
     if lay.get("V") is not None:
@@ -1378,7 +1378,7 @@ def site_table15(lay, rows, stats, table_name="site_table"):
     cap = (f"The {n} open sites of Fig.~\\ref{{fig:map15}}, numbered from south to north"
            + (f"; each site swaps and charges and has {equip} chargers" if equip else "") + ". " + _evenings(lay)
            + "Restaurants and orders: those within 1~km of the site along the street grid. Entry point: the nearest "
-           "of the six bridges and tunnels where riders start. Chargers busy: share of the evening with a charger in "
+           "of the six entry points (bridges and tunnel portals) where riders start. Chargers busy: share of the evening with a charger in "
            f"use{'; ' + power if power else ''}. Cost rise: increase in the daily cost if only "
            "this site is closed. $\\pm$: half-width of the 95\\pct{} CI.")
     if lay.get("demo"):
@@ -1481,13 +1481,11 @@ def site_table15_compact(lay, rows, stats, table_name="site_table_compact"):
         # R11 fix: "on average" (the cost rise of the weakest bold site and of the strongest other one, 628 and 617,
         # have overlapping intervals; the claim holds for the means); no commas around it: the comma's depth in the
         # caption's last line pushed the last text line of page 9's right column to page 10 (underfull column)
-        cap += (f": the {_word(len(near))} within {ENTRY_NEAR15_KM:g}~km of a bridge or tunnel where riders enter "
-                "(bold) swap the most and on average cost the most to close")
+        cap += (f" (bold: within {ENTRY_NEAR15_KM:g}~km of an entry point; these swap the most and, on average, cost the most to close)")
     if lay.get("demo"):
         cap = "DEMO (synthetic statistics). " + cap
-    note = (sizes + (f"Means over the {ns} evenings. " if ns else "")
-            + "Cost rise if closed: increase in the daily cost if only this site closes ($\\pm$ half-width of the "
-            "95\\pct{} CI).")
+    note = (sizes + (f"Means over the {ns} planning evenings, weighted as in Section~\\ref{{sec:model:upper}}; " if ns else "")
+            + "cost rise if closed = daily cost increase if only this site closes ($\\pm$ 95\\pct{} CI half-width).")
     # three-line headers keep the two number columns as narrow as their numbers (with two lines the table was 2.4 pt
     # wider than the column)
     head = ["No.", "Site", "Area"] + ([_hdr("Role,", "size")] if size_col else []) + \
@@ -1608,11 +1606,12 @@ def fig_map15_detailed(layout_json=None, site_stats_csv=None):
 # ``check_overlaps15`` and ``check_crossings15`` measure every label on the drawn figure and report any problem.
 MAP15_PREFERRED = "rotated"     # the full-width frame: a larger scale, every name sits next to its badge
 MAP15_FONT = "Arial Narrow"     # map labels (TrueType, embedded as Type 42); falls back to DejaVu Sans if missing
-PLAIN15 = {"water": "#b8d1e3", "land": "#f6f3ee", "boro": "#e9e5dd", "park": "#cde2bb", "park_edge": "#b4cf9f",
-           "coast": "#93afc6", "casing": "#d5cec3", "road": "#ffffff", "hw_casing": "#cbb98a", "hw": "#fbefc8",
-           "tunnel": "#5f7f99", "site": OURS, "site_entry": "#1b4f8f", "ink": "#1c1c1c", "water_ink": "#56799a",
-           "bridge_ink": "#5d5850", "park_ink": "#55753f", "boro_ink": "#a39b8e", "leader": "#4a4a4a",
-           "furniture": "#333333", "frame": "#8c8c8c"}
+PLAIN15 = {"water": "#e3e9ef", "land": "#f5f6f8", "boro": "#edf0f3", "park": "#e4e8ec", "park_edge": "#d3d9df",
+           "coast": "#c5cdd5", "casing": "#f5f6f8", "road": "#ffffff", "hw_casing": "#dfe3e7", "hw": "#ffffff",
+           "tunnel": "#8a95a0", "site": OURS, "site_entry": "#1b4f8f", "ink": "#1c1c1c", "water_ink": "#8696a6",
+           "bridge_ink": "#6c7278", "park_ink": "#7b848c", "boro_ink": "#aab1b8", "leader": "#555555",
+           "furniture": "#444444", "frame": "#a3a9af"}
+# R12e (2026-11-04): one blue-grey family (water, land, boroughs, park) with white streets; badges keep the two blues.
 # lightness L* (greyscale): water 82.6 < park 87.5 < other boroughs 91.0 < Manhattan 95.9; badges 50.4
 # Restaurant density shading: the computation of the former map (fig_map15_detailed: DOHMH restaurants, ``step`` =
 # 75 m cells, Gaussian of ``sigma`` = 3 cells = 225 m, per km^2; every Manhattan restaurant, cells over the frame grown
@@ -1624,7 +1623,7 @@ PLAIN15 = {"water": "#b8d1e3", "land": "#f6f3ee", "boro": "#e9e5dd", "park": "#c
 # greyscale; the white streets and the shoreline still mark them as land.  ``alpha`` 0.45 and 0.40 were tried
 # (2026-10-31) and not kept: in greyscale the shading stays as grey as the rivers (L* 83.5, 84.8), in colour the
 # secondary hot spots (Chinatown, Lower East Side, Greenwich Village) fade.
-DENS15 = dict(color="#e8955a", alpha=0.50, lo=0.35, hi=0.985, step=0.075, sigma=3.0, pad=1.0)
+DENS15 = dict(color="#6f9bd1", alpha=0.38, lo=0.35, hi=0.985, step=0.075, sigma=3.0, pad=1.0)  # R12e: blue tint
 BRIDGES15 = ("Brooklyn Bridge", "Williamsburg Bridge", "Ed Koch Queensboro Bridge Upper Level",
              "Ed Koch Queensboro Bridge Lower Level", "Ed Koch Queensboro Bridge Lower Roadway",
              "Queensboro Bridge (Upper Level)", "Queensboro Bridge (Lower Level)", "Roosevelt Island Bridge",
@@ -2870,10 +2869,53 @@ def fig_vk(run=None, layout_json=None):
           + f"; k=1 = {one_lab or ks[0]}; star k={bk} {bv:,.1f} ({100 * bserved:.1f} %)")
 
 
+
+def fig_map15_numbers(layout_json=None, site_stats_csv=None, name="fig_map15_numbers"):
+    """``make_figs.py map15_numbers`` (R16, 2026-11-09): the north-up frame of the plain 15-site map drawn at its
+    printed width in the 8-page paper (0.68 column = 171 pt) with the badge numbers only, so that every label prints at
+    7 pt or more.  The site names are in the compact site table, which uses the same numbers.  Same sites, numbering,
+    dark badges and geography as ``fig_map15_northup``; the scale bar is labelled at 0 and 1 km only (the 0.5 km label
+    does not fit at this scale).  Writes ``figs/<name>.{pdf,png}`` and nothing else."""
+    import copy
+    global map15_label, place_site_labels15, _scale_bar15
+    layout_json = layout_json or os.path.join(MAP15_DIR, "layout.json")
+    lay = load_layout15(layout_json)
+    cands = load_candidates15(lay.get("candidates_csv"))
+    depots = [(d["name"], *rot(float(d["lat"]), float(d["lon"]))) for d in lay["depots"]] if lay.get("depots") \
+        else [(nm, *rot(la, lo)) for nm, la, lo in ENTRY_POINTS]
+    rx, ry = restaurants_xy()
+    rows = site_rows15(lay, cands, rx, ry, nta_polygons(), depots)
+    dark = entry_badges15(lay, rows)
+
+    def bar_two_labels(ax, x0, y0, s_pt, font, km=1.0, zorder=7):
+        from matplotlib.patches import Rectangle
+        h, col = 2.2 / s_pt, PLAIN15["furniture"]
+        arts = [ax.add_patch(Rectangle((x0, y0), 0.5 * km, h, fc=col, ec=col, lw=0.5, zorder=zorder)),
+                ax.add_patch(Rectangle((x0 + 0.5 * km, y0), 0.5 * km, h, fc="white", ec=col, lw=0.5, zorder=zorder))]
+        for v, txt in ((0.0, "0"), (km, f"{km:g} km")):
+            arts.append(_halo_text(ax, x0 + v, y0 - 1.6 / s_pt, txt, lw=1.6, fontproperties=font, color=col,
+                                   ha="center", va="top", zorder=zorder))
+        return arts
+
+    keep = (copy.deepcopy(FRAMES15["northup"]), map15_label, place_site_labels15, _scale_bar15)
+    try:
+        FRAMES15["northup"].update(width=171.36 / 72.0, scale=(138.0, 15.0))
+        _scale_bar15 = bar_two_labels
+        map15_label = lambda n: ""
+        place_site_labels15 = lambda P, sizes, *a, **k: [((x, y, x, y), None, 0.0) for x, y in P]
+        W, H, problems, info = fig_map15_plain_variant(rows, "northup", name=name, demo=bool(lay.get("demo")), dark=dark)
+    finally:
+        FRAMES15["northup"], map15_label, place_site_labels15, _scale_bar15 = keep
+    problems = [q for q in problems if not (q.startswith("site ") and "name covers badge" in q)]
+    print(f"{name}: {W * 72:.1f} x {H * 72:.1f} pt; label check: " + ("; ".join(problems) if problems else "clean"))
+    for line in info:
+        print("   ", line)
+    return rows
+
 FIGURES = {"map": fig_map, "onesite": fig_onesite, "budget": fig_budget, "costs": fig_costs,
            "framework": fig_framework, "map15": fig_map15_plain, "map15_detailed": fig_map15_detailed,
-           "map15_demo": demo_map15, "vk": fig_vk}
-ON_REQUEST = ("map15_demo", "map15_detailed")        # not drawn by a run without names
+           "map15_numbers": fig_map15_numbers, "map15_demo": demo_map15, "vk": fig_vk}
+ON_REQUEST = ("map15_demo", "map15_detailed", "map15_numbers")        # not drawn by a run without names
 
 if __name__ == "__main__":
     import sys
@@ -2885,6 +2927,7 @@ if __name__ == "__main__":
             kw[key] = args[i + 1]
             del args[i:i + 2]
     takes = {"map15": ("layout_json", "site_stats_csv"), "map15_detailed": ("layout_json", "site_stats_csv"),
+             "map15_numbers": ("layout_json", "site_stats_csv"),
              "vk": ("layout_json", "run")}                                                  # options per figure
     names = args or [n for n in FIGURES if n not in ON_REQUEST]
     unknown = [n for n in names if n not in FIGURES]

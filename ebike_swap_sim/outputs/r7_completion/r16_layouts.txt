@@ -1,0 +1,7 @@
+# R16 (2026-11-09): a charging-only hub added to the best pair as a THIRD unit (155,900 USD, within three units),
+# at each of the four hub-capable sites within 2 km of a site of the best pair (D16 W 13th St, D13 Bowery, D11 Kenmare St
+# from the cell D07; D47 E 72nd St from the dock D45). Open-sites riders, 600 s per solve, 12 planning + 12 held-out evenings.
+D07:SC:B3:C2|D16:C:B0:C4|D45:SC:B3:C2
+D07:SC:B3:C2|D13:C:B0:C4|D45:SC:B3:C2
+D07:SC:B3:C2|D11:C:B0:C4|D45:SC:B3:C2
+D07:SC:B3:C2|D45:SC:B3:C2|D47:C:B0:C4

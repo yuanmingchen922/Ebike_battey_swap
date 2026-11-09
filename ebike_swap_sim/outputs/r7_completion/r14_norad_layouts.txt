@@ -1,0 +1,2 @@
+# R14: the one near-tie site whose no-approach-limit pricing stopped one evening short (seed 11) on 2026-10-24
+D39:SC:B3:C2

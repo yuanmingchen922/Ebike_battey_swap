@@ -58,10 +58,10 @@ OURS, CONTEXT, INK, INK2 = "#2a78d6", "#b4b4b4", "#111111", "#555555"
 OURS_DARK = "#1b4f8f"
 # R11 (2026-10-31): axis titles 8 pt; ticks, legend and every label inside the plot FS = 7.5 pt (7.8 pt printed at
 # \columnwidth; was 6 to 7 pt at 0.84\columnwidth, 5.4 pt printed)
-FS = 7.5
+FS = 7       # R16 (2026-11-09): drawn at the printed width (0.66 column) so all labels print at 7 pt or more
 plt.rcParams.update({
     "font.family": "serif", "font.serif": ["Times New Roman", "Times", "STIXGeneral"],
-    "mathtext.fontset": "stix", "font.size": 8, "axes.labelsize": 8, "xtick.labelsize": FS,
+    "mathtext.fontset": "stix", "font.size": 7.5, "axes.labelsize": 7.5, "xtick.labelsize": FS,
     "ytick.labelsize": FS, "legend.fontsize": FS, "pdf.fonttype": 42, "ps.fonttype": 42,
     "axes.linewidth": 0.5, "xtick.major.width": 0.5, "ytick.major.width": 0.5, "savefig.dpi": 300,
 })
@@ -139,8 +139,8 @@ def write_table(d):
         *rows_tex,
         "    \\bottomrule",
         "  \\end{tabular*}\\par\\smallskip",
-        "  {\\raggedright\\scriptsize Cost units per evening. Every feasible layout not in bold has a lower bound at or "
-        "above the best cost at its budget, so the loop need not solve it.\\par}",
+        "  {\\raggedright\\scriptsize Cost units per evening; a layout not in bold has a lower bound at or above the "
+        "best cost at its budget, so the loop need not solve it.\\par}",
         "\\end{table}",
         "",
     ])
@@ -163,7 +163,7 @@ def draw_figure(d):
     open_sites = {part.split(":", 1)[0] for part in low["layout"].split("|")}
     open_corners = {node for cid, node in cands if cid in open_sites}
     riders0 = low["evenings"][0]["riders"]
-    fig, (ax, axq) = plt.subplots(2, 1, figsize=(3.5, 2.3), sharex=True,
+    fig, (ax, axq) = plt.subplots(2, 1, figsize=(2.15, 1.245), sharex=True,
                                   gridspec_kw={"height_ratios": [2.3, 0.9], "hspace": 0.1})
     styles = [dict(color=OURS, ls="-"), dict(color=OURS_DARK, ls=(0, (3, 1.2)))]
     # context: candidate rows and the open site
@@ -175,7 +175,7 @@ def draw_figure(d):
             ax.axhline(node, color=CONTEXT, lw=0.5, ls=":", zorder=0)
             ax.text(H + 0.15, node, cid, fontsize=FS, color=INK2, va="center", ha="left")
     for node in st["depots"]:
-        ax.text(H + 0.15, node, "depot", fontsize=FS, color=INK2, va="center", ha="left")
+        ax.text(H + 0.15, node, "start", fontsize=FS, color=INK2, va="center", ha="left")
     # rider paths
     for rd, sty in zip(riders0, styles):
         for a in rd["arcs"]:
@@ -207,7 +207,7 @@ def draw_figure(d):
     ax.set_ylim(min(corners) - 0.45, max(corners) + 0.6)
     ax.set_yticks(corners)
     ax.set_yticklabels([str(c) for c in corners])
-    ax.set_ylabel(f"corner ({st['hop_km']:g} km apart)", labelpad=3)
+    ax.set_ylabel("corner", labelpad=3)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
         axq.spines[sp].set_visible(False)
@@ -215,14 +215,14 @@ def draw_figure(d):
     axq.text(H + 0.15, q_res, "reserve", fontsize=FS, color=INK2, va="center", ha="left")
     axq.set_ylim(-0.3, L + 0.5)
     axq.set_yticks([0, L // 2, L])
-    axq.set_ylabel("charge (levels)", labelpad=3)
+    axq.set_ylabel("charge", labelpad=3)
     axq.set_xlabel(f"time slot $t$ ({st['slot_min']} min each)", labelpad=2)
     axq.set_xticks(range(0, H + 1, 2))
     handles = [Line2D([], [], color=styles[0]["color"], ls=styles[0]["ls"], lw=0.9, label="rider 1"),
                Line2D([], [], color=styles[1]["color"], ls=styles[1]["ls"], lw=0.9, label="rider 2"),
                Line2D([], [], color=OURS, lw=2.4, label="carrying an order"),
                Line2D([], [], marker="D", ms=4, mfc="white", mec=OURS, mew=1.0, ls="", label="swap")]
-    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=4, frameon=False, handlelength=1.6,
+    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.0), ncol=2, frameon=False, handlelength=1.6,
               columnspacing=0.9, handletextpad=0.4, borderaxespad=0.0, fontsize=FS)
     # checks on the drawn figure: the two y titles must not touch; the smallest text and its printed size
     fig.canvas.draw()
@@ -239,7 +239,7 @@ def draw_figure(d):
     with open(os.path.join(FIGS, "fig_toy.pdf"), "rb") as fh:                   # the size as written
         m = re.search(rb"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]", fh.read())
     w_bp, h_bp = float(m.group(1)), float(m.group(2))
-    s = COLUMN_BP / w_bp
+    s = 0.66 * COLUMN_BP / w_bp
     print(f"fig_toy: {w_bp:.1f} x {h_bp:.1f} bp; at \\columnwidth scale {s:.3f}, printed height {h_bp * s:.0f} bp; "
           f"smallest text {small:g} pt ({small * s:.2f} pt printed); y titles {gap:.1f} pt apart")
 

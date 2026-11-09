@@ -1,0 +1,6 @@
+# hub-in-range layouts of the two-site study (review of 2026-11-04): a swap-only cabinet at the Greenwich Village cell D07
+# with a charging-only hub within the 2 km transfer range (D16 Whizz store W 13th St, 1.2 km; D13 JOCO hub Bowery, 1.35 km),
+# and a hub beside the full swap-and-charge site at D07. Priced on the open-sites tier like every layout of Section VI.
+D07:S:B3:C0|D16:C:B0:C4
+D07:S:B3:C0|D13:C:B0:C4
+D07:SC:B3:C2|D16:C:B0:C4

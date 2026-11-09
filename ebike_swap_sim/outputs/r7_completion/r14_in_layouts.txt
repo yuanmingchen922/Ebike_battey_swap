@@ -1,0 +1,12 @@
+# R14 (2026-11-05) completion run, in-sample (12 planning evenings, open-sites riders, 600 s per solve).
+# Every hub within 2 km of either site of the best pair D07 | D45: D16 1.20, D13 1.35, D11 1.65 km from D07; D47 1.50 km from D45
+# (D16 / D13 with the cabinet and D16 beside the full site were costed on 2026-11-04).
+D07:S:B3:C0|D11:C:B0:C4
+D07:SC:B3:C2|D11:C:B0:C4
+D07:SC:B3:C2|D13:C:B0:C4
+D45:S:B3:C0|D47:C:B0:C4
+D45:SC:B3:C2|D47:C:B0:C4
+# the listed-site pair with four spares each (three units), not costed before
+D23:SC:B4:C2|D45:SC:B4:C2
+# the best pair plus the E 14th St dock: 8 of 12 evenings done on 2026-10-23 (wall budget); the remaining ones
+D07:SC:B3:C2|D24:SC:B3:C2|D45:SC:B3:C2

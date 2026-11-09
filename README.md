@@ -8,14 +8,14 @@ comes with a **lower bound**, so we know how far it can be from the best possibl
 a city-scale fleet, riders follow a dispatch rule and the answer is the **best layout found**, compared with common
 siting rules.
 
-A paper reporting both studies is in preparation.
+A paper reporting both studies is written for IEEE ITSC 2027.
 
 **Short answer.** *One to three stations, 8 riders:* one station goes in the corridor between 13th and 54th Street;
 DOT's proposed Site 34 (2nd Ave & E 13th St) is best. Two stations cut the daily cost by a third. Swap and charge at
 the same site. Rule-based layouts and the 2024 DOT pilot pair cost 92-141 USD per day more.
 *Fifteen stations, 64 riders:* put one within 1 km of each of the six bridge and tunnel entry points, five in the
 restaurant-dense East Village and Midtown, and four north of 59th Street. Layouts from common siting rules cost
-1,527-3,738 USD per day more.
+1,966-4,178 USD per day more.
 
 ![The fifteen sites of the best layout found](docs/figs/fig_map15.png)
 
@@ -36,14 +36,16 @@ A planner has a budget in units of 52,150 USD. One unit buys one swap-and-charge
 * a **size** per site: an SC site has $`B \in \{2,3,4\}`$ spare batteries and $`C \in \{1,2\}`$ chargers;
   a swap-only cabinet $`B \in \{2,3\}`$; a hub $`C \in \{2,4\}`$ (hubs only at 12 places).
 
-A layout is scored by its expected **daily cost**: set-up per day plus the operating cost of the 16:00-20:00
-dinner peak, averaged over 12 demand evenings.
+A layout is scored by its expected **daily cost**: the evening's share of the set-up cost (a quarter of the day's
+fixed cost, since the evening covers 4 of 16 operating hours) plus the operating cost of the 16:00-20:00 dinner
+peak, as a weighted mean over 12 demand evenings. "Per day" means this per-evening cost throughout.
 
 The first study prices budgets of one to three units with 8 riders and about 40 orders per evening. The second
 asks where **15 sites** should go at a city-scale fleet: 64 riders start at the four East River bridges and the
 Holland and Lincoln Tunnels with a quarter to half a battery, and 320 orders arrive per evening on average. The
-planner opens exactly 15 SC sites of one unit each (782,250 USD), then may move spares and chargers between them at
-the same cost. Each site has its own 1.4 kW power connection. Fifteen is a policy target, not a model result.
+planner opens exactly 15 SC sites of one unit each (782,250 USD), then may move spare batteries between them at
+the same investment (every site keeps its 2 chargers). Each site has its own 1.4 kW power connection. Fifteen is a number we fixed in advance, not a model
+result.
 
 ### 1.2 An open-data modular simulator
 
@@ -98,8 +100,9 @@ paper; implemented as `ilp.build_model(aggregate=True)`). This makes the model s
 Pricing one layout means 12 integer programs of minutes each. So for each budget we report an upper bound
 $`\mathrm{UB}_m`$ (the best layout found) and a lower bound $`\mathrm{LB}_m`$.
 
-**Two rider conventions.** *All-candidates* riders may reposition toward any candidate, even a closed one (the model
-of record). *Open-sites* riders reposition only toward open sites and depots. The open-sites library is a subset, so
+**Two rider conventions.** *All-candidates* riders may reposition toward any candidate, even a closed one (used for
+the bounds only). *Open-sites* riders reposition only toward open sites and their own start points (the convention
+of every reported cost). The open-sites library is a subset, so
 
 ```math
 \mathrm{OPEX}^{\mathrm{all}}_\xi(x)\le \mathrm{OPEX}^{\mathrm{open}}_\xi(x).
@@ -126,8 +129,10 @@ under both. Open-sites integer-program bounds are used only in open-sites statem
 * **Certificate:** budget $m$ is certified when $`\mathrm{UB}_m-\mathrm{LB}_m\le\max\{0.01\,\mathrm{UB}_m,1\}`$.
   At one unit all 236 layouts are enumerated with pruning.
 
-Comparisons between layouts are paired on the same scenarios, with stratified 95 % intervals (6 df over the 12
-in-sample evenings; 3 df for the held-out weekday check).
+Comparisons between layouts are paired on the same scenarios, with stratified 95 % intervals over six strata (three
+demand levels, on weekdays and at weekends, two evenings each). The degrees of freedom follow the Welch-Satterthwaite
+approximation. With two evenings per stratum they lie between 1 and 6, so the intervals are wide. Held-out
+comparisons use the same six strata on 12 held-out evenings.
 
 ### 1.5 Fifteen sites: search without a bound
 
@@ -158,7 +163,7 @@ flowchart LR
     A["Open data<br/>DOHMH, ACS, FoodHub,<br/>DOT sites, Citi Bike GBFS"] --> B["Instance generator<br/>sites_nyc / generator / data_nyc"]
     B --> C["Arc library<br/>arcs.py (per rider or shared union), aggregate.py"]
     C --> D["Operations ILP<br/>ilp.py"]
-    C --> E["Rule policies<br/>baseline.py, rolling.py"]
+    C --> E["Rule and online policies<br/>baseline.py, rolling.py"]
     D --> F["Layout evaluator + cache<br/>bilevel.LowerLevelEvaluator"]
     E --> F
     F --> G["Benders master and bounds<br/>benders.py"]
@@ -228,7 +233,9 @@ PYTHONPATH=. python3 experiments/r7_siting.py --stage setup --dry-run --lp-worke
 
 The production run of the one-to-three-site study uses the `manhattan_dot` family: 59 candidates, 12 scenarios
 plus 12 held-out, 8 riders, 14-block approach radius. It ran on one AWS r7i.4xlarge in 48.1 instance hours
-(50.87 USD).
+(50.87 USD). Layouts costed later with `r7_search.py --stage price-list` (in-range hubs, further three-unit layouts,
+the hub as a third unit, held-out evenings) took 13.6 more instance hours (14.38 USD); their records and results
+are in `ebike_swap_sim/outputs/r7_completion/`.
 
 1. `r7_siting.py --stage feas` screens which sites can work alone.
 2. `r7_siting.py --stage rootlp` solves the root LP per scenario.
@@ -245,20 +252,22 @@ with `--write-lanes` (`r7_search.py --write-lanes --lanes-plan r2` writes
 
 ```bash
 # laptop
-deploy/aws/sync_up.sh                 # code and data to the server
+deploy/aws/sync_up.sh                 # code and data to the server (copy the lanes_r2* lane plans by hand)
 deploy/aws/upload_licence.sh          # Gurobi licence to the server (mode 600)
 # server (~/battery_swap)
 bash deploy/aws/bootstrap.sh          # venv, licence check, toy optimum 12.5, smoke stage
 bash deploy/aws/r7_prod_check.sh      # pre-flight check of code and lane plans
 . env.sh                              # venv, licence, cd ebike_swap_sim
+# batches 0-3 of lanes.txt (gate, feasibility, one-site pass, root LPs) run first; lanes_r2.txt continues from there
 bash ../deploy/aws/run_lanes.sh start outputs/cloud_lanes_siting_prod/lanes_r2.txt
 bash ../deploy/aws/run_lanes.sh status outputs/cloud_lanes_siting_prod/lanes_r2.txt
 # laptop
 deploy/aws/sync_down.sh               # results back
 ```
 
-Copy `deploy/aws/aws_env.example.sh` to `aws_env.sh` first (git-ignored). Final report:
-`ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md`.
+Copy `deploy/aws/aws_env.example.sh` to `aws_env.sh` first (git-ignored). Final report of the
+production run (24 October 2026): `ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md`; later runs:
+`ebike_swap_sim/outputs/r7_completion/RESULTS_completion.md`.
 
 ### The fifteen-site run
 
@@ -275,10 +284,11 @@ The fifteen-site study uses the `manhattan15` family (the candidates and data of
 5. `--stage validate` runs the exact check; `--stage report` writes `RESULTS.md`.
 
 The result of record adds `--grid-kw 1000`, which lifts the shared 2 kW limit so that each site keeps only its own
-1.4 kW connection. It ran on one AWS r7i.4xlarge in 2.01 instance hours (2.13 USD), reusing the evenings of the
-shared-supply run; that run and the 48-rider trial took another 4.1 instance hours (4.35 USD). `--write-lanes`
-writes the 48-rider plan `outputs/cloud_lanes_k15/`; the 64-rider plans are `outputs/cloud_lanes_k15sp/` (result of
-record) and `outputs/cloud_lanes_k15n64/` (shared supply). On AWS:
+1.4 kW connection. Its size polish was then re-run to convergence (`--stage search --redo --polish-rounds 30`, then
+`--stage final --redo`; the default is 3 rounds). It ran on one AWS r7i.4xlarge in 2.18 instance hours (2.31 USD,
+the re-run included), reusing the evenings of the shared-supply run; that run and the 48-rider trial took another
+4.1 instance hours (4.35 USD). `--write-lanes` writes the 48-rider plan `outputs/cloud_lanes_k15/`; the 64-rider
+plans are `outputs/cloud_lanes_k15sp/` (result of record) and `outputs/cloud_lanes_k15n64/` (shared supply). On AWS:
 
 ```bash
 # laptop (licence and bootstrap as above)
@@ -301,12 +311,19 @@ All values are USD per day, set-up included. Every cost is an open-sites cost. F
 one-to-three-site study (8 riders, coordinated plan), Findings 5-7 from the fifteen-site study (64 riders, dispatch
 rule). Dollar values are comparable only within a study.
 
+Intervals in Findings 1-4 use Welch-Satterthwaite degrees of freedom (section 1.4) and include the completion runs of
+4-9 November 2026: 12 held-out evenings for every comparison, the in-range hubs, the four-spare listed-site pair, the
+second three-site layout and the hub as a third unit. `notes/verify/r7_completion_facts.py` re-derives them from the
+records in `ebike_swap_sim/outputs/r7_completion/` (table: `RESULTS_completion.md` in that folder).
+`ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md` predates these runs: it has the same point values with
+narrower 6-df intervals and held-out values for six weekday evenings only.
+
 | Budget | Best layout found | Cost | Lower bound | Gap |
 |---|---|---|---|---|
 | 1 unit | DOT Site 34, open-sites riders | 1,085.87 | 1,084.31 | **0.14 %** (certified) |
 | 1 unit | same, all-candidates riders | 1,085.87 | 1,036.03 | 4.59 % |
 | 2 units | Greenwich Village grid cell + Citi Bike dock 3rd Ave & E 62nd St | 716.85 | 670.23 | 6.50 % |
-| 2 units | all-DOT pair: Site 34 + the same dock | 719.60 | | |
+| 2 units | listed-site pair: Site 34 + the same dock | 719.60 | | |
 | 3 units | best pair, 4 spares each | 709.98 | 670.23 | 5.60 % |
 
 ### Finding 1: one site belongs in a corridor, led by DOT Site 34
@@ -314,39 +331,68 @@ rule). Dollar values are comparable only within a study.
 * Site 34 (2nd Ave & E 13th St) costs 1,085.87 and serves 77.5 % of orders.
 * For open-sites riders it is certified within 0.14 % of the best single site.
 * For all-candidates riders the gap is 4.59 %; Site 34 is not proven best there.
-* 11 sites lie within 3 %, all between 13th and 54th Street. Only 23 of 59 candidates can work alone.
+* Ten more sites lie within 3 % of it, all between 13th and 54th Street. Only 23 of 59 candidates can work alone.
 * The approach radius changes the order: without it three Midtown sites tie and Site 34 is eighth.
 
 ![Best one- and two-site layouts](docs/figs/fig_map.png)
 
+*The dashed pair, labelled "All-DOT pair" in the legend, is the listed-site pair of Finding 2.*
+
 ### Finding 2: a second site cuts cost by a third
 
 * The best pair costs 716.85: 34 % less than one site. It serves 98.3 % of orders.
-* Unserved orders fall from 9.5 to 0.74 per day.
-* The all-DOT pair (Site 34 + the E 62nd St dock) is only $2.75 \pm 10.58$ more. A planner limited to listed
-  sites loses almost nothing.
-* A third budget unit buys batteries, not a third site: one more spare at both sites gives 709.98. The best
-  three-site layout priced costs $8.82 \pm 2.46$ more.
+* Unserved orders fall from 9.5 to 0.74 per day. On 12 held-out evenings one site still costs $385.40 \pm 84.22$
+  more than two.
+* The listed-site pair (Site 34 + the E 62nd St dock, both from public records, no grid cell) costs 719.60, only
+  $2.75 \pm 24.36$ more. Held out, the two pairs tie ($-0.31 \pm 2.53$).
+* The two pairs cannot be ranked. Four evenings of each stopped at the solver's time limit, so the best pair may
+  cost up to 4.5 less and the listed-site pair up to 6.5 less. A planner limited to listed sites pays at most 7.2
+  more per day.
+* A third budget unit buys batteries, not a third site: one more spare at both sites gives 709.98, a gain of
+  $6.87 \pm 5.32$. The listed-site pair with four spares each costs 709.84, a tie with 709.98 ($0.14 \pm 5.33$
+  less).
+* Two three-site extensions of the best pair were priced: the best pair plus each of the two best single sites. With Site 34 it costs
+  718.80, $8.82 \pm 9.12$ more than the four-spare pair. With the Citi Bike dock at E 14th St it costs 717.55,
+  $7.56 \pm 10.27$ more. The 12 planning evenings do not separate either difference from zero; on the 12 held-out
+  evenings both do ($7.79 \pm 3.36$ and $7.90 \pm 3.30$ more). No bound rules out a better three-site layout.
 
 ![Best layout and lower bound per budget](docs/figs/fig_budget.png)
 
 ### Finding 3: swap and charge at the same site
 
-* A swap-only cabinet plus a separate charging hub costs $728.92 \pm 65.93$ more. The hub stays idle: in a
-  four-hour evening it cannot return charged batteries in time.
-* A swap-only cabinet beside a full site costs $41.49 \pm 7.66$ more.
+A charging hub does not swap. Its batteries reach riders only by transfer to a swap site within 2 km. All extra
+costs below are against the best pair.
+
+* **Hub out of transfer range** (W 92nd St or W 42nd St, with a swap-only cabinet at the Greenwich Village grid
+  cell): $728.92 \pm 124.87$ more. The hub stands idle and the cabinet serves 58.0 % of orders from its three spares.
+* **Hub within range** (W 13th St, Bowery or Kenmare St, 1.2-1.65 km from the cell): transfers run, but the cabinet
+  with a hub still costs $619.10 \pm 89.55$, $659.11 \pm 81.71$ and $659.09 \pm 80.90$ more.
+* **Full site at the cell with one of these three hubs:** $441.54 \pm 91.46$, $443.59 \pm 88.96$ and
+  $446.16 \pm 82.86$ more. Each costs more than Site 34 alone. Seven to nine of the 12 evenings of each stopped at
+  the solver's time limit, so each may cost up to 19.8-28.8 less.
+* On 12 held-out evenings the six in-range hub layouts cost 459-675 more and the out-of-range layout 731 more. All
+  intervals are above zero.
+* So even within transfer range, a hub never paid in place of a second swap site.
+* A swap-only cabinet does far better than a hub: a cabinet at the E 14th St dock, with the full site at the
+  E 62nd St dock, costs $41.49 \pm 14.92$ more (96.9 % of orders served).
+
+* **Hub as a third unit** (a four-charger hub at W 13th St, Bowery, Kenmare St or E 72nd St, added to the best pair):
+  28.44-29.98 more than the best pair (27.53-31.95 on the held-out evenings), about the hub's own set-up cost of
+  29.52. No battery is transferred in any of the 96 solves, so the hub is never used. Against the four-spare pair the
+  W 13th St hub costs $36.85 \pm 8.76$ more ($31.77 \pm 5.94$ held out; proven range [30.80, 76.60]).
 
 ### Finding 4: better than rules and the 2024 pilot
 
-| Two-site layout | Extra cost (in sample) | Held-out weekdays (3 df) | Open-sites regret interval |
+| Two-site layout | Extra cost (in sample) | Held-out (12 evenings) | Open-sites regret interval |
 |---|---|---|---|
-| Spread rule | $+91.70 \pm 37.08$ | not measured | [89.09, 138.33] |
-| DOT 2024 pilot pair (Cooper Sq + Essex Market) | $+134.42 \pm 37.70$ | $+143.12 \pm 84.05$ | [130.86, 181.04] |
-| Coverage rule | $+141.48 \pm 38.12$ | $+130.37 \pm 84.01$ | [136.19, 188.10] |
+| Spread rule | $+91.70 \pm 75.33$ | $+60.30 \pm 55.66$ | [89.09, 138.33] |
+| DOT 2024 pilot pair (Cooper Sq + Essex Market) | $+134.42 \pm 55.41$ | $+130.72 \pm 123.75$ | [130.86, 181.04] |
+| Coverage rule | $+141.48 \pm 53.09$ | $+129.91 \pm 122.02$ | [136.19, 188.10] |
 
-Held-out values cover weekday scenarios only (strata 1-3, stratified interval with 3 df); weekend held-out cells
-were not solved. The losses come almost entirely from 2.4 to 3.7 unserved orders per day. The best pair puts one site on each side
-of the island.
+Held-out values cover 12 held-out evenings (seeds 100-111, weekdays and weekends) that were not used to choose the
+layouts. All three intervals are above zero, in sample and held out. The regret interval is the proven range of the
+extra cost over the best possible layout. The losses come almost entirely from 2.4 to 3.7 unserved orders per day.
+The best pair puts one site on each side of the island.
 
 ![Daily cost by layout](docs/figs/fig_costs.png)
 
@@ -355,36 +401,41 @@ of the island.
 Run: `ebike_swap_sim/outputs/r8_k15_sp/` (64 riders, dispatch rule, each site on its own connection); the map is at
 the top of this page.
 
-* The best layout found costs 9,081.4 (95 % CI 8,111.4-10,051.3) and serves 86.4 % of orders; held out, 9,234.6.
+* The best layout found costs 8,642.1 (95 % CI 7,027.3-10,256.8) and serves 88.2 % of orders; held out, 8,977.9.
 * **Gateways (map 1-4, 9, 10):** one site within 1 km of each entry point: City Hall Park cabinet (Brooklyn
-  Bridge), Chinatown grid cell at Bowery & Division St (Manhattan Bridge), Essex Market pilot hub (Williamsburg
+  Bridge), Chinatown grid cell at Bowery & Division St (Manhattan Bridge), Essex Market pilot site (Williamsburg
   Bridge), Greenwich Village grid cell at 6th Ave & Bleecker St (Holland Tunnel), DOT Site 29 at 9th Ave & W 42nd St
   (Lincoln Tunnel), Midtown East grid cell at 3rd Ave & E 53rd St (Queensboro Bridge). Riders enter with a quarter
-  to half a battery, so many swap soon after. These are the six busiest sites (6.5-8.1 swaps per evening); closing
-  one costs 628-1,272 more.
-* **East Village and Midtown (5-8, 11):** Cooper Square pilot hub, DOT Site 34, Swobbee cabinets at 836 6th Ave,
+  to half a battery, so many swap soon after. These are the six busiest sites (7.6-8.0 swaps per evening); closing
+  one costs 1,019-1,515 more.
+* **East Village and Midtown (5-8, 11):** Cooper Square pilot site, DOT Site 34, Swobbee cabinets at 836 6th Ave,
   Citi Bike dock on W 42nd St, Midtown grid cell at 8th Ave & W 57th St.
 * **North of 59th Street (12-15):** grid cells at 2nd Ave & E 76th St and at Amsterdam Ave & W 80th St, Citi Bike
   docks on W 92nd St and E 95th St. Only 16 % of the restaurants are here, but 41 % of the orders are delivered here.
-* Every site has 2 chargers; the four busiest hold 4 spares, the four quietest 2. With 3 spares at every site the
-  same sites cost $638.1 \pm 167.7$ more ($801.3 \pm 294.0$ held out).
+* Every site has 2 chargers. Sites 1-5, 9 and 10 hold 4 spares, site 14 holds 3 and the other seven hold 2. Cooper
+  Square makes 6.6 swaps per evening and the other eight sites 2.8-4.3. With 3 spares at every site the same sites
+  cost $1{,}077.5 \pm 421.0$ more ($1{,}057.9 \pm 418.9$ held out).
+* The pattern by area is firm; the exact sites are not. With 3 spares at every site, two other search starts end at
+  other site sets that tie with ours, and the start from no site ends 617 higher, within noise ($\pm 1{,}327$).
+  Closing site 7, 8 or any of 11-14 alone raises the cost by an amount whose interval includes zero.
 * Under one shared 2 kW supply the best layout found also has a site at every entry point
   (`ebike_swap_sim/outputs/r8_k15_n64/`).
 
-### Finding 6: common siting rules cost 1,527-3,738 USD per day more
+### Finding 6: common siting rules cost 1,966-4,178 USD per day more
 
 | Fifteen-site layout | Extra cost (in sample) | Held-out (12 evenings) | Orders served |
 |---|---|---|---|
-| Spread rule | $+1{,}526.6 \pm 315.8$ | $+2{,}145.2 \pm 352.9$ | 80.0 % |
-| k-median | $+2{,}107.3 \pm 519.4$ | $+2{,}419.1 \pm 521.9$ | 78.1 % |
-| Coverage rule | $+3{,}255.9 \pm 698.6$ | $+3{,}694.6 \pm 657.7$ | 71.2 % |
-| DOT-first | $+3{,}339.3 \pm 1{,}027.8$ | $+4{,}064.1 \pm 374.0$ | 71.9 % |
-| Access rule | $+3{,}738.3 \pm 298.2$ | $+3{,}970.6 \pm 429.9$ | 68.6 % |
+| Spread rule | $+1{,}965.9 \pm 1{,}561.6$ | $+2{,}401.9 \pm 382.5$ | 80.0 % |
+| k-median | $+2{,}546.6 \pm 895.2$ | $+2{,}675.7 \pm 603.8$ | 78.1 % |
+| Coverage rule | $+3{,}695.3 \pm 1{,}571.5$ | $+3{,}951.2 \pm 864.8$ | 71.2 % |
+| DOT-first | $+3{,}778.6 \pm 1{,}530.6$ | $+4{,}320.8 \pm 419.6$ | 71.9 % |
+| Access rule | $+4{,}177.6 \pm 385.5$ | $+4{,}227.2 \pm 629.6$ | 68.6 % |
 
-k-median minimises the restaurant-to-site distance; DOT-first takes DOT pilot hubs and PEC sites first; the access
+k-median minimises the restaurant-to-site distance; DOT-first takes DOT pilot sites and PEC sites first; the access
 rule ranks sites by inverse-distance access to restaurants. All intervals exclude zero, in sample and held out.
-Unserved orders make 78-92 % of each rule's extra cost; coverage, DOT-first and access also leave 18-34 % of the
-land more than 14 blocks from a site.
+Against our sites with 3 spares each, the rule layouts still cost 888-3,100 more. Unserved orders make 78-91 % of
+each rule's extra cost; coverage, DOT-first and access also leave 18-34 % of the land more than 14 blocks from a
+site.
 
 ### Finding 7: cost keeps falling beyond fifteen sites
 
@@ -395,8 +446,9 @@ land more than 14 blocks from a site.
 
 One site is DOT Site 34 and two sites the best pair of Finding 2; the other points lie on the search paths and are
 not the best cost for each number of sites. Each added site saves about 190-680 a day against 13.19 of set-up.
-Twenty sites cost $320.1 \pm 195.7$ less than the polished fifteen in sample, but not significantly held out
-($538.8 \pm 548.6$): fifteen is a policy target, not an optimum.
+Twenty sites with 3 spares each cost $958.2 \pm 202.0$ less than our fifteen with 3 spares each. They tie with the
+polished fifteen ($119.2 \pm 323.9$ more in sample, 282 less held out): fifteen is a number we fixed, not the
+cheapest.
 
 ### Context
 
@@ -404,7 +456,8 @@ Twenty sites cost $320.1 \pm 195.7$ less than the polished fifteen in sample, bu
   two of them, Cooper Square and Essex Market, lie in our area.
 * **PEC programme:** DOT's Public E-Bike Charging programme has proposed 50 sidewalk sites citywide and will keep
   about 25; a vendor call is planned for late 2026.
-* **Site 34:** a PEC proposal at the southeast corner of 2nd Ave and E 13th St, about 600 m from Cooper Square.
+* **Site 34:** a PEC proposal at the southeast corner of 2nd Ave and E 13th St, about 600 m in a straight line from
+  Cooper Square (six blocks, about 900 m, on the model's street grid).
 
 ### Checks on the operations model (earlier rounds)
 
@@ -431,19 +484,22 @@ Sources: `ebike_swap_sim/outputs/R6_DIGEST.md` and `R6_FILL_DIGEST.md`.
 
 ### Limitations
 
-* One to three sites: 12 demand evenings, 8 riders and about 40 orders per evening; the held-out check covers
-  weekdays only.
-* A four-hour evening is too short for transfers or hubs to pay. End-of-evening stock is not valued.
+* One to three sites: 12 demand evenings, 8 riders and about 40 orders per evening, checked on 12 held-out
+  evenings. With two evenings per stratum the intervals have 1 to 6 degrees of freedom and are wide.
+* A four-hour evening leaves transfers little time to pay. End-of-evening stock is not valued.
 * In the one-to-three-site study riders follow a coordinated full-information plan; real online costs would be
   higher.
-* Fifteen sites: the dispatch rule costs about twice the exact optimum at small scale; the spare polish stopped
-  after three rounds while still improving.
-* About 5.6 of the 64 riders per evening end queued at a site below the battery reserve; the rule reports this but
+* Fifteen sites: the dispatch rule costs about twice the exact optimum at small scale. Only the best start's layout
+  had its spares moved.
+* The spare polish ran until none of the three most promising moves improved (six accepted moves). It takes the
+  first improving move, not the best. One layout it priced but did not take, differing by one spare, costs
+  $41.7 \pm 127.6$ less in sample and $51.0 \pm 138.9$ more held out: a tie.
+* About 4.6 of the 64 riders per evening end queued at a site below the battery reserve; the rule reports this but
   does not prevent it, and the cost does not charge it.
-* Charging one or two unserved-order penalties per such rider changes no comparison among the fifteen-site layouts,
-  but makes 20 sites significantly cheaper than the polished 15 held out as well.
+* Charging one or two unserved-order penalties per such rider changes no comparison with the five siting-rule
+  layouts.
 * Each of the fifteen sites has its own 1.4 kW connection, and two chargers draw at most 0.67 kW: chargers and
-  spares bind, not power (riders wait 31-79 minutes on average at the six gateway sites).
+  spares bind, not power (riders wait 32-64 minutes on average at the six gateway sites).
 * With one shared 2 kW supply, as in Findings 1-4, the same rule layouts cost 788-1,270 more and serve 7.5-9.6
   points fewer orders, partly because the rule hands a shared supply to the sites in site-number order.
 * Citi Bike docks stand in for "a sidewalk place with power". Grid cells are not addresses. Cabinet space and
@@ -503,14 +559,14 @@ on the operations model.
 | 4 | First bi-level siting on 12 Midtown candidates | `ebike_swap_sim/outputs/e9_bilevel/RESULTS_E9.md` |
 | 5 | Reading-list extensions: aggregation, rolling horizon, network, RL, Manhattan family | `ebike_swap_sim/outputs/R5_DIGEST.md`; `ebike_swap_sim/outputs/r5_x*/RESULTS_final.md` |
 | 6 | Penalty recalibration, re-runs, first Manhattan siting pass | `ebike_swap_sim/outputs/R6_DIGEST.md`, `ebike_swap_sim/outputs/R6_FILL_DIGEST.md`; `ebike_swap_sim/outputs/r6_penalty/`, `ebike_swap_sim/outputs/r6_fill/`, `ebike_swap_sim/outputs/r6_o2/RESULTS_final.md` |
-| 7 | Production siting of one to three sites on 59 DOT-based candidates | `ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md` |
+| 7 | Production siting of one to three sites on 59 candidates (45 listed sites, 14 grid cells) | `ebike_swap_sim/outputs/r7_prod_final/RESULTS_final.md`; completion runs: `ebike_swap_sim/outputs/r7_completion/RESULTS_completion.md` |
 | 8 | Fifteen sites at 64 riders under the dispatch rule; shared-supply sensitivity; 48-rider trial | `ebike_swap_sim/outputs/r8_k15_sp/RESULTS.md`; `ebike_swap_sim/outputs/r8_k15_n64/RESULTS.md`; `ebike_swap_sim/outputs/r8_k15/` |
 
-Modelling decisions are recorded in `notes/DECISIONS.md`; the siting design is in `notes/bilevel_siting_design.md`
-and `notes/siting_scaleup_design.md`, the fifteen-site design in `notes/siting15_design.md`. Every fifteen-site
-number is traced to its file in `notes/r8_results_facts.md` (shared supply: `notes/r8_results_facts_planA.md`);
-`notes/verify/r8_facts.py` re-derives them from the downloaded server results in `cloud_results/`, which stay
-local.
+Modelling decisions up to the fifteen-site launch are recorded in `notes/DECISIONS.md`; the siting design is in `notes/bilevel_siting_design.md`
+and `notes/siting_scaleup_design.md`, the fifteen-site design in `notes/siting15_design.md`. The facts sheet
+`notes/r8_results_facts.md` documents the first fifteen-site run (three polish rounds, 9,081.4; shared supply:
+`notes/r8_results_facts_planA.md`). The fifteen-site numbers above come from the re-run to convergence, reported in
+`ebike_swap_sim/outputs/r8_k15_sp/RESULTS.md`.
 
 ## 6. Repository map
 
@@ -522,6 +578,7 @@ local.
 ├── food_order.csv            FoodHub order sample (preparation times, cuisine mix)
 ├── reading/README.md         reading notes on the five papers
 ├── notes/                    design notes, decisions, facts sheets, cost calibration, dataset notes
+├── paper/                    round-4 supervisor brief (LaTeX sources and figures)
 ├── deploy/aws/               AWS scripts: sync, bootstrap, lane dispatcher, pre-flight checks, watchdog
 ├── paper_itsc/figs/src/      paper figure and count scripts (they write to paper_itsc/figs/, which stays local)
 └── ebike_swap_sim/
@@ -532,4 +589,4 @@ local.
 ```
 
 Not in the repository: the Gurobi licence, AWS keys and connection file, per-solve caches and snapshots, the
-downloaded server results (`cloud_results/`), copyrighted PDFs, and paper drafts.
+downloaded server results (`cloud_results/`), copyrighted PDFs, and the conference paper drafts.
