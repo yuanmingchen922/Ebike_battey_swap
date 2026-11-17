@@ -1,0 +1,14 @@
+%% macros.tex -- shared macros for the ITSC paper (IEEEtran conference class).
+\newif\ifanon \anontrue   % set to \anonfalse and fill in main.tex to show the authors
+%% Units.
+\newcommand{\usd}{~USD}
+\newcommand{\pct}{\%}
+%% Colour scheme shared by all figures and tables.
+\definecolor{cOurs}{HTML}{2A78D6}    % layouts found by our method
+\definecolor{cRule}{HTML}{EB6834}    % rule layouts (coverage, spread)
+\definecolor{cPilot}{HTML}{E34948}   % DOT 2024 pilot
+\definecolor{cRole}{HTML}{6250D6}    % role variants (swap-only cabinet, charging hub)
+\definecolor{cGrey}{HTML}{9A9A9A}    % context
+%% Figure inclusion that still builds while a figure file is missing.
+%% #1 = file, #2 = width, #3 = placeholder height.
+\newcommand{\figfile}[3]{\IfFileExists{#1}{\includegraphics[width=#2]{#1}}{\fbox{\parbox[c][#3][c]{\dimexpr#2-2\fboxsep-2\fboxrule\relax}{\centering\footnotesize missing: \texttt{\detokenize{#1}}}}}}

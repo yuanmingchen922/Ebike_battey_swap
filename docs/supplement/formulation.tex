@@ -1,0 +1,29 @@
+% Supplementary material: complete formulation of the bilevel siting model and its solution method.
+% Build: pdflatex formulation; bibtex formulation; pdflatex formulation (x2).
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{graphicx,booktabs,array,xcolor,textcomp}
+\usepackage[hyphens]{url}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,backgrounds,shapes.misc}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage[utf8]{inputenc}
+\usepackage[hidelinks]{hyperref}
+\input{macros}
+\newtheorem{proposition}{Proposition}
+\renewcommand{\thesection}{\Roman{section}}
+\renewcommand{\thesubsection}{\thesection-\Alph{subsection}}
+\title{Supplementary Material: Complete Formulation\\[2pt]\large Battery-Swapping and Charging Stations for E-Bike Food Delivery in Manhattan}
+\author{}
+\date{}
+\begin{document}
+\maketitle
+\noindent The paper describes the lower level and the bounds in words and keeps four equations. This supplement gives the complete formulation that the released code implements: the upper level (Section~\ref{sec:bilevel}), the lower-level integer program (Section~\ref{sec:model}) and the solution method with its bounds (Section~\ref{sec:method}). Section numbers ``of the paper'' refer to the main paper. Equation numbers here are those of this supplement.
+\setcounter{section}{1}
+\input{formulation_body}
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+\end{document}
