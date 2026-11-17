@@ -9,6 +9,8 @@ a city-scale fleet, riders follow a dispatch rule and the answer is the **best l
 siting rules.
 
 A paper reporting both studies is written for IEEE ITSC 2027.
+The complete mathematical formulation (upper level, lower-level integer program, bounds and solution method) is in
+[`docs/supplement/formulation.pdf`](docs/supplement/formulation.pdf).
 
 **Short answer.** *One to three stations, 8 riders:* one station goes in the corridor between 13th and 54th Street;
 DOT's proposed Site 34 (2nd Ave & E 13th St) is best. Two stations cut the daily cost by a third. Swap and charge at
@@ -61,6 +63,9 @@ The simulator has six modules. Each can be replaced with better data or a better
 | Policy limits and prices | Costs, time-of-use electricity, penalties | `costs.py`, `or_instance.py` |
 
 ### 1.3 Two-stage (bi-level) model
+
+This section is a summary. Every constraint, with its equation number, is written out in
+[`docs/supplement/formulation.pdf`](docs/supplement/formulation.pdf) (10 pages; LaTeX sources beside it).
 
 **Upper level (planner).** Binary $w_{l\psi}=1$ if option $\psi$ (role, $B$, $C$) is built at location $l$.
 At most one option per location, total investment within $m$ budget units, at least one swap-capable site, and a
@@ -574,6 +579,7 @@ and `notes/siting_scaleup_design.md`, the fifteen-site design in `notes/siting15
 .
 ├── README.md                 this file
 ├── docs/figs/                figures used in this README (copies of the paper figures)
+├── docs/supplement/          complete formulation of the bilevel model (formulation.pdf and its LaTeX sources)
 ├── data/                     public raw data (with two OpenStreetMap extracts), MANIFEST.md, validate.py
 ├── food_order.csv            FoodHub order sample (preparation times, cuisine mix)
 ├── reading/README.md         reading notes on the five papers
@@ -589,4 +595,5 @@ and `notes/siting_scaleup_design.md`, the fifteen-site design in `notes/siting15
 ```
 
 Not in the repository: the Gurobi licence, AWS keys and connection file, per-solve caches and snapshots, the
-downloaded server results (`cloud_results/`), copyrighted PDFs, and the conference paper drafts.
+downloaded server results (`cloud_results/`), copyrighted PDFs, and the conference paper drafts. The only PDF
+kept in the repository is the formulation supplement.
